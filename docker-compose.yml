@@ -1,0 +1,72 @@
+version: "3.9"
+
+x-shared: &shared
+  restart: unless-stopped
+  networks:
+    - router-net
+
+services:
+  db:
+    image: postgres:16-alpine
+    <<: *shared
+    environment:
+      POSTGRES_USER: router
+      POSTGRES_PASSWORD: router
+      POSTGRES_DB: router
+    ports:
+      - "5432:5432"
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U router"]
+      interval: 5s
+      timeout: 3s
+      retries: 5
+
+  redis:
+    image: redis:7-alpine
+    <<: *shared
+    ports:
+      - "6379:6379"
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 3s
+      retries: 5
+
+  app:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    <<: *shared
+    environment:
+      DATABASE_URL: "postgresql+asyncpg://router:router@db:5432/router"
+      REDIS_URL: "redis://redis:6379/0"
+      ENCRYPTION_KEY: "change-me-to-a-secure-random-key"
+      LOG_LEVEL: "INFO"
+    ports:
+      - "8000:8000"
+    depends_on:
+      db:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    volumes:
+      - ./ml:/app/ml
+
+  ui:
+    build:
+      context: .
+      dockerfile: Dockerfile.ui
+    <<: *shared
+    ports:
+      - "80:80"
+    depends_on:
+      - app
+
+volumes:
+  pgdata:
+
+networks:
+  router-net:
+    driver: bridge
