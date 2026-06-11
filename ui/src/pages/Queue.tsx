@@ -1,5 +1,5 @@
 import { useQuery } from "@tanstack/react-query";
-import { ListOrdered, Workers, Timer, CheckCircle2, XCircle } from "lucide-react";
+import { ListOrdered, Bot, Timer, CheckCircle2, XCircle } from "lucide-react";
 import { fetchQueueStatus } from "../lib/api";
 
 export default function Queue() {
@@ -29,7 +29,7 @@ export default function Queue() {
     {
       label: "Active Workers",
       value: (data?.workers_active ?? 0).toLocaleString(),
-      icon: Workers,
+      icon: Bot,
       color: "text-green-400",
       bg: "bg-green-900/20",
       hint: "Workers processing items",
