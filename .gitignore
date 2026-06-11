@@ -1,0 +1,11 @@
+node_modules/
+.npm/
+.env
+__pycache__/
+*.pyc
+dist/
+ml/__pycache__/
+ml/*.pyc
+ml/*.joblib
+.venv/
+venv/
