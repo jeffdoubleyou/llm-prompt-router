@@ -73,9 +73,11 @@ cd llm-router
 docker compose up -d --build
 ```
 
-- Backend API: http://localhost:8000
-- UI Dashboard: http://localhost:80
-- Swagger docs: http://localhost:8000/docs
+All services communicate over the `llm-router` network. Only the backend API and UI are exposed to the host (on ports `APP_PORT` and `UI_PORT` respectively). PostgreSQL and Redis are not exposed to the host — they communicate only over the internal `llm-router` network, reducing the attack surface.
+
+- Backend API: `http://localhost:${APP_PORT:-8080}`
+- UI Dashboard: `http://localhost:${UI_PORT:-3000}`
+- Swagger docs: `http://localhost:${APP_PORT:-8080}/docs`
 
 ### Local Development
 
@@ -89,7 +91,7 @@ pip install -r requirements.txt
 # Start services:
 docker compose up -d db redis
 
-uvicorn app.main:app --reload --host 0.0.0.0 --port 8000
+uvicorn app.main:app --reload --host 0.0.0.0 --port ${APP_PORT:-8080}
 ```
 
 **UI:**
@@ -162,6 +164,8 @@ python -m ml.train
 
 | Environment Variable | Default | Description |
 |---------------------|---------|-------------|
+| `APP_PORT` | `8080` | Port for the backend FastAPI server |
+| `UI_PORT` | `3000` | Port for the frontend Nginx/UI server |
 | `DATABASE_URL` | `postgresql+asyncpg://router:router@db:5432/router` | Async DB URL |
 | `REDIS_URL` | `redis://redis:6379/0` | Redis URL |
 | `ENCRYPTION_KEY` | (required) | Fernet key for API key encryption |
