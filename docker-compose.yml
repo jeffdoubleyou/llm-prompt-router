@@ -13,8 +13,7 @@ services:
       POSTGRES_USER: router
       POSTGRES_PASSWORD: router
       POSTGRES_DB: router
-    ports:
-      - "5432:5432"
+
     volumes:
       - pgdata:/var/lib/postgresql/data
     healthcheck:
@@ -26,8 +25,7 @@ services:
   redis:
     image: redis:7-alpine
     <<: *shared
-    ports:
-      - "6379:6379"
+
     healthcheck:
       test: ["CMD", "redis-cli", "ping"]
       interval: 5s
