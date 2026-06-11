@@ -74,7 +74,7 @@ async def create_model(entry: ModelRegistryCreate, db=Depends(get_db)):
     return model.to_dict()
 
 
-@router.put("/api/v1/models/{model_id}")
+@router.put("/api/v1/models/{model_id:path}")
 async def update_model(model_id: str, update: ModelRegistryUpdate, db=Depends(get_db)):
     model = await get_model_by_id(db, model_id)
     if not model:
@@ -99,7 +99,7 @@ async def update_model(model_id: str, update: ModelRegistryUpdate, db=Depends(ge
     return model.to_dict()
 
 
-@router.delete("/api/v1/models/{model_id}")
+@router.delete("/api/v1/models/{model_id:path}")
 async def delete_model(model_id: str, db=Depends(get_db)):
     model = await get_model_by_id(db, model_id)
     if not model:
@@ -110,7 +110,7 @@ async def delete_model(model_id: str, db=Depends(get_db)):
     return {"deleted": model_id}
 
 
-@router.get("/api/v1/models/{model_id}")
+@router.get("/api/v1/models/{model_id:path}")
 async def get_model(model_id: str, db=Depends(get_db)):
     model = await get_model_by_id(db, model_id)
     if not model:
