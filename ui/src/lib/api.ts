@@ -58,6 +58,50 @@ export interface ClassifierStatus {
   is_training: boolean;
 }
 
+export interface ClassifierSample {
+  id: string;
+  prompt_text: string;
+  selected_model: string;
+  features: Record<string, unknown>;
+  confidence: number | null;
+  is_correct: boolean | null;
+  created_at: string | null;
+}
+
+export interface ClassifierSamplesResponse {
+  samples: ClassifierSample[];
+  total: number;
+  page: number;
+  page_size: number;
+}
+
+export async function fetchClassifierSamples(params?: {
+  page?: number;
+  page_size?: number;
+  model?: string;
+  correct?: boolean;
+  q?: string;
+}): Promise<ClassifierSamplesResponse> {
+  const search = new URLSearchParams();
+  if (params?.page) search.set("page", String(params.page));
+  if (params?.page_size) search.set("page_size", String(params.page_size));
+  if (params?.model) search.set("model", params.model);
+  if (params?.correct !== undefined) search.set("correct", String(params.correct));
+  if (params?.q) search.set("q", params.q);
+  const qs = search.toString();
+  return fetcher(`/api/v1/classifier/samples${qs ? `?${qs}` : ""}`);
+}
+
+export async function updateClassifierSample(
+  sampleId: string,
+  isCorrect: boolean
+): Promise<ClassifierSample> {
+  return fetcher(`/api/v1/classifier/samples/${encodeURIComponent(sampleId)}`, {
+    method: "PATCH",
+    body: JSON.stringify({ is_correct: isCorrect }),
+  });
+}
+
 export interface QueueStatus {
   depth: number;
   workers_active: number;
