@@ -9,3 +9,4 @@ ml/*.pyc
 ml/*.joblib
 .venv/
 venv/
+data/

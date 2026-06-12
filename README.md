@@ -79,6 +79,30 @@ All services communicate over the `llm-router` network. Only the backend API and
 - UI Dashboard: `http://localhost:${UI_PORT:-3000}`
 - Swagger docs: `http://localhost:${APP_PORT:-8080}/docs`
 
+### Deploy and Upgrade
+
+PostgreSQL data is stored in a **bind mount** at `./data/postgres` so it survives redeployments.
+
+**Safe upgrade command** (preserves all data):
+
+```bash
+docker compose down && docker compose up -d --build
+```
+
+**Do NOT use** `docker compose down -v` — the `-v` flag removes named volumes and will **permanently delete** all database contents including models, request logs, and training data.
+
+**First-time setup** (fresh clone):
+
+```bash
+docker compose up -d --build
+python scripts/seed_models.py   # populate with default models if DB is empty
+```
+
+**Data persistence**
+- Model configs, request logs, and classifier training data all live in `./data/postgres/` on the host.
+- This directory is gitignored — do not commit it.
+- To back up your data, copy the `./data/postgres/` directory.
+
 ### Local Development
 
 **Backend:**

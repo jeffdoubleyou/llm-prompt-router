@@ -15,7 +15,7 @@ services:
       POSTGRES_DB: router
 
     volumes:
-      - pgdata:/var/lib/postgresql/data
+      - ./data/postgres:/var/lib/postgresql/data
     healthcheck:
       test: ["CMD-SHELL", "pg_isready -U router"]
       interval: 5s
@@ -61,9 +61,6 @@ services:
       - "80:80"
     depends_on:
       - app
-
-volumes:
-  pgdata:
 
 networks:
   router-net:
