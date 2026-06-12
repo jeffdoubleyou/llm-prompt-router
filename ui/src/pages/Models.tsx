@@ -27,6 +27,7 @@ const initialForm = {
   tpm_limit: 100000,
   is_active: true,
   priority: 0,
+  timeout: 0,
 };
 
 const PROVIDERS = [
@@ -104,6 +105,7 @@ export default function Models() {
       tpm_limit: model.tpm_limit,
       is_active: model.is_active,
       priority: model.priority,
+      timeout: model.timeout ?? 0,
     });
     setShowModal(true);
   };
@@ -155,6 +157,7 @@ export default function Models() {
                 <th className="py-3 px-4">Capabilities</th>
                 <th className="py-3 px-4 text-right">Cost (1k in/out)</th>
                 <th className="py-3 px-4 text-right">Priority</th>
+                <th className="py-3 px-4 text-right">Timeout (s)</th>
                 <th className="py-3 px-4 text-center">Status</th>
                 <th className="py-3 px-4 text-right">Actions</th>
               </tr>
@@ -195,6 +198,9 @@ export default function Models() {
                     {model.cost_per_1k_output.toFixed(4)}
                   </td>
                   <td className="py-3 px-4 text-right">{model.priority}</td>
+                  <td className="py-3 px-4 text-right text-xs">
+                    {model.timeout !== null ? `${model.timeout}s` : "default"}
+                  </td>
                   <td className="py-3 px-4 text-center">
                     {model.is_active ? (
                       <span className="badge-green">Active</span>
@@ -227,7 +233,7 @@ export default function Models() {
               {(data?.models ?? []).length === 0 && (
                 <tr>
                   <td
-                    colSpan={7}
+                    colSpan={8}
                     className="py-12 text-center text-gray-600"
                   >
                     No models registered. Click "Add Model" to get started.
@@ -473,6 +479,25 @@ export default function Models() {
                     }
                   />
                 </div>
+                <div>
+                  <label className="label">Timeout (seconds, 0 = use global)</label>
+                  <input
+                    className="input"
+                    type="number"
+                    step="0.1"
+                    min="0"
+                    value={form.timeout}
+                    onChange={(e) =>
+                      setForm({
+                        ...form,
+                        timeout: parseFloat(e.target.value) || 0,
+                      })
+                    }
+                    placeholder="0"
+                  />
+                </div>
+              </div>
+              <div className="grid grid-cols-2 gap-4">
                 <div>
                   <label className="label">Active</label>
                   <div className="flex items-center gap-2 mt-2">

@@ -26,6 +26,7 @@ class Model(Base):
     tpm_limit: Mapped[int] = mapped_column(Integer, default=100000)
     is_active: Mapped[bool] = mapped_column(Boolean, default=True)
     priority: Mapped[int] = mapped_column(Integer, default=0)
+    timeout: Mapped[float | None] = mapped_column(Float, nullable=True)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=datetime.utcnow)
     updated_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), default=datetime.utcnow, onupdate=datetime.utcnow
@@ -47,6 +48,7 @@ class Model(Base):
             "tpm_limit": self.tpm_limit,
             "is_active": self.is_active,
             "priority": self.priority,
+            "timeout": self.timeout,
             "created_at": self.created_at.isoformat() if self.created_at else None,
             "updated_at": self.updated_at.isoformat() if self.updated_at else None,
         }

@@ -27,6 +27,13 @@ logger = logging.getLogger(__name__)
 router = APIRouter(tags=["chat"])
 
 
+def _get_timeout(model_obj: Model) -> float:
+    """Return the effective timeout for a model, falling back to the global setting."""
+    if model_obj.timeout is not None:
+        return model_obj.timeout
+    return settings.upstream_timeout
+
+
 @router.post("/v1/chat/completions")
 async def chat_completions(
     chat_req: ChatCompletionRequest,
@@ -105,8 +112,9 @@ async def _handle_non_stream(
     db,
 ):
     start_time = time.monotonic()
+    timeout = _get_timeout(model_obj)
     try:
-        async with httpx.AsyncClient(timeout=settings.upstream_timeout) as client:
+        async with httpx.AsyncClient(timeout=timeout) as client:
             resp = await client.post(upstream_url, json=payload, headers=headers)
             elapsed = (time.monotonic() - start_time) * 1000
 
@@ -204,7 +212,8 @@ async def _handle_stream(
         first_chunk = True
 
         try:
-            async with httpx.AsyncClient(timeout=settings.upstream_timeout) as client:
+            timeout = _get_timeout(model_obj)
+            async with httpx.AsyncClient(timeout=timeout) as client:
                 async with client.stream("POST", upstream_url, json=payload, headers=headers) as resp:
                     if resp.status_code != 200:
                         error_text = await resp.aread()

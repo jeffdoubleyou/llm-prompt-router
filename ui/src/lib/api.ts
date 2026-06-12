@@ -15,6 +15,7 @@ export interface ModelEntry {
   tpm_limit: number;
   is_active: boolean;
   priority: number;
+  timeout: number | null;
   created_at: string | null;
   updated_at: string | null;
 }

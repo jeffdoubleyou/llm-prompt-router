@@ -138,6 +138,7 @@ class ModelRegistryCreate(BaseModel):
     tpm_limit: int = 100000
     is_active: bool = True
     priority: int = 0
+    timeout: float | None = None
 
 
 class ModelRegistryUpdate(BaseModel):
@@ -155,6 +156,7 @@ class ModelRegistryUpdate(BaseModel):
     tpm_limit: int | None = None
     is_active: bool | None = None
     priority: int | None = None
+    timeout: float | None = None
 
 
 class PromptFeatures(BaseModel):

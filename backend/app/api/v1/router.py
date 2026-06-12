@@ -66,6 +66,7 @@ async def create_model(entry: ModelRegistryCreate, db=Depends(get_db)):
         tpm_limit=entry.tpm_limit,
         is_active=entry.is_active,
         priority=entry.priority,
+        timeout=entry.timeout,
     )
     db.add(model)
     await db.commit()
