@@ -14,6 +14,7 @@ from sse_starlette.sse import EventSourceResponse
 from app.core.config import settings
 from app.core.database import get_db
 from app.core.models import (
+    ClassifierSampleUpdate,
     ClassifierStatus,
     LiveMetric,
     ModelRegistryCreate,
@@ -258,6 +259,62 @@ async def live_metrics(db=Depends(get_db)):
             await asyncio.sleep(5)
 
     return EventSourceResponse(event_generator())
+
+
+@router.get("/api/v1/classifier/samples")
+async def list_classifier_samples(
+    page: int = Query(1, ge=1),
+    page_size: int = Query(20, ge=1, le=100),
+    model: str | None = None,
+    correct: bool | None = None,
+    q: str | None = None,
+    db=Depends(get_db),
+):
+    """List training samples with pagination, filtering, and search."""
+    stmt = select(ClassifierSample).order_by(ClassifierSample.created_at.desc())
+
+    if model:
+        stmt = stmt.where(ClassifierSample.selected_model == model)
+    if correct is not None:
+        stmt = stmt.where(ClassifierSample.is_correct == correct)
+    if q:
+        stmt = stmt.where(ClassifierSample.prompt_text.ilike(f"%{q}%"))
+
+    total_result = await db.execute(select(func.count()).select_from(stmt.subquery()))
+    total = total_result.scalar() or 0
+
+    skip = (page - 1) * page_size
+    stmt = stmt.offset(skip).limit(page_size)
+    result = await db.execute(stmt)
+    samples = list(result.scalars().all())
+
+    return {
+        "samples": [s.to_dict() for s in samples],
+        "total": total,
+        "page": page,
+        "page_size": page_size,
+    }
+
+
+@router.patch("/api/v1/classifier/samples/{sample_id}")
+async def update_classifier_sample(
+    sample_id: str,
+    body: ClassifierSampleUpdate,
+    db=Depends(get_db),
+):
+    """Mark a training sample as correct or incorrect."""
+    result = await db.execute(
+        select(ClassifierSample).where(ClassifierSample.id == sample_id)
+    )
+    sample = result.scalar_one_or_none()
+    if not sample:
+        raise HTTPException(status_code=404, detail=f"Sample '{sample_id}' not found")
+
+    sample.is_correct = body.is_correct
+    await db.commit()
+    await db.refresh(sample)
+    logger.info("Marked sample %s as correct=%s", sample_id, body.is_correct)
+    return sample.to_dict()
 
 
 @router.get("/api/v1/classifier")

@@ -228,3 +228,7 @@ class LiveMetric(BaseModel):
     total_cost: float = 0.0
     top_model: str = ""
     timestamp: str = ""
+
+
+class ClassifierSampleUpdate(BaseModel):
+    is_correct: bool
