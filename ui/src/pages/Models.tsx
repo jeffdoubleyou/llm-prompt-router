@@ -1,11 +1,14 @@
 import { useState } from "react";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
-import { Plus, Pencil, Trash2, RefreshCw, Power, PowerOff } from "lucide-react";
+import { Plus, Pencil, Trash2, RefreshCw, Power, PowerOff, Download, Upload } from "lucide-react";
 import {
   fetchModels,
   createModel,
   updateModel,
   deleteModel,
+  exportModels,
+  importModels,
+  ImportResult,
   ModelEntry,
 } from "../lib/api";
 
@@ -48,6 +51,9 @@ export default function Models() {
   const [modalMode, setModalMode] = useState<ModalMode>("create");
   const [form, setForm] = useState(initialForm);
   const [editingId, setEditingId] = useState<string | null>(null);
+  const [showImportResult, setShowImportResult] = useState(false);
+  const [importResult, setImportResult] = useState<ImportResult | null>(null);
+  const [importing, setImporting] = useState(false);
 
   const { data, isLoading } = useQuery({
     queryKey: ["models"],
@@ -78,6 +84,40 @@ export default function Models() {
       queryClient.invalidateQueries({ queryKey: ["models"] });
     },
   });
+
+  const handleExport = async () => {
+    try {
+      const blob = await exportModels();
+      const url = window.URL.createObjectURL(blob);
+      const a = document.createElement("a");
+      a.href = url;
+      a.download = "models-export.json";
+      document.body.appendChild(a);
+      a.click();
+      window.URL.revokeObjectURL(url);
+      document.body.removeChild(a);
+    } catch (err) {
+      console.error("Export failed:", err);
+      alert(`Export failed: ${err instanceof Error ? err.message : "Unknown error"}`);
+    }
+  };
+
+  const handleImport = async (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (!file) return;
+    setImporting(true);
+    try {
+      const result = await importModels(file);
+      setImportResult(result);
+      setShowImportResult(true);
+      queryClient.invalidateQueries({ queryKey: ["models"] });
+    } catch (err) {
+      alert(`Import failed: ${err instanceof Error ? err.message : "Unknown error"}`);
+    } finally {
+      setImporting(false);
+      e.target.value = "";
+    }
+  };
 
   const openCreate = () => {
     setModalMode("create");
@@ -141,10 +181,27 @@ export default function Models() {
     <div className="space-y-6">
       <div className="flex items-center justify-between">
         <h2 className="text-2xl font-bold">Models</h2>
-        <button onClick={openCreate} className="btn-primary gap-2">
-          <Plus size={16} />
-          Add Model
-        </button>
+        <div className="flex items-center gap-2">
+          <button onClick={handleExport} className="btn-secondary gap-2">
+            <Download size={16} />
+            Export
+          </button>
+          <label className="btn-secondary gap-2 cursor-pointer">
+            <Upload size={16} />
+            Import
+            <input
+              type="file"
+              accept=".json"
+              onChange={handleImport}
+              className="hidden"
+              disabled={importing}
+            />
+          </label>
+          <button onClick={openCreate} className="btn-primary gap-2">
+            <Plus size={16} />
+            Add Model
+          </button>
+        </div>
       </div>
 
       <div className="card overflow-hidden p-0">
@@ -539,6 +596,48 @@ export default function Models() {
                 </button>
               </div>
             </form>
+          </div>
+        </div>
+      )}
+
+      {showImportResult && importResult && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60">
+          <div className="bg-gray-900 rounded-lg border border-gray-800 w-full max-w-md">
+            <div className="p-4 border-b border-gray-800 flex items-center justify-between">
+              <h3 className="text-lg font-semibold">Import Results</h3>
+              <button
+                onClick={() => setShowImportResult(false)}
+                className="text-gray-500 hover:text-gray-300"
+              >
+                ✕
+              </button>
+            </div>
+            <div className="p-4 space-y-3">
+              <div className="flex items-center gap-3">
+                <span className="badge-green">Imported: {importResult.imported}</span>
+                <span className="badge-yellow">Skipped: {importResult.skipped}</span>
+              </div>
+              {importResult.errors.length > 0 && (
+                <div>
+                  <p className="text-sm text-red-400 mb-2">Errors:</p>
+                  <div className="max-h-40 overflow-y-auto space-y-1">
+                    {importResult.errors.map((err, i) => (
+                      <div key={i} className="text-xs text-red-300 bg-red-900/20 p-2 rounded">
+                        <strong>{err.model}</strong>: {err.error}
+                      </div>
+                    ))}
+                  </div>
+                </div>
+              )}
+            </div>
+            <div className="p-4 border-t border-gray-800 flex justify-end">
+              <button
+                onClick={() => setShowImportResult(false)}
+                className="btn-primary"
+              >
+                Close
+              </button>
+            </div>
           </div>
         </div>
       )}

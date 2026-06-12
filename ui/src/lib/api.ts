@@ -168,6 +168,37 @@ export async function deleteModel(id: string): Promise<{ deleted: string }> {
   });
 }
 
+export async function exportModels(): Promise<Blob> {
+  const res = await fetch(`${API_BASE}/api/v1/models/export`, {
+    headers: { "Accept": "application/json" },
+  });
+  if (!res.ok) {
+    const text = await res.text().catch(() => "Unknown error");
+    throw new Error(`${res.status} ${res.statusText}: ${text.slice(0, 200)}`);
+  }
+  return res.blob();
+}
+
+export interface ImportResult {
+  imported: number;
+  skipped: number;
+  errors: Array<{ model: string; error: string }>;
+}
+
+export async function importModels(file: File): Promise<ImportResult> {
+  const formData = new FormData();
+  formData.append("file", file);
+  const res = await fetch(`${API_BASE}/api/v1/models/import`, {
+    method: "POST",
+    body: formData,
+  });
+  if (!res.ok) {
+    const text = await res.text().catch(() => "Unknown error");
+    throw new Error(`${res.status} ${res.statusText}: ${text.slice(0, 200)}`);
+  }
+  return res.json();
+}
+
 export async function fetchLogs(params?: {
   skip?: number;
   limit?: number;

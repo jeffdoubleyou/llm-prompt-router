@@ -1,13 +1,15 @@
 from __future__ import annotations
 
 import asyncio
+import io
 import json
 import logging
 import time
 import uuid
 from datetime import datetime, timedelta
 
-from fastapi import APIRouter, Depends, HTTPException, Query
+from fastapi import APIRouter, Depends, HTTPException, Query, UploadFile, File
+from fastapi.responses import StreamingResponse
 from sqlalchemy import func, select
 from sse_starlette.sse import EventSourceResponse
 
@@ -110,6 +112,95 @@ async def delete_model(model_id: str, db=Depends(get_db)):
     await db.commit()
     logger.info("Deleted model: %s", model_id)
     return {"deleted": model_id}
+
+
+@router.get("/api/v1/models/export")
+async def export_models(db=Depends(get_db)):
+    models = await get_models(db)
+    export_data = {
+        "version": 1,
+        "exported_at": datetime.utcnow().isoformat(),
+        "models": [m.to_dict() for m in models],
+    }
+    json_bytes = json.dumps(export_data, indent=2).encode("utf-8")
+    return StreamingResponse(
+        io.BytesIO(json_bytes),
+        media_type="application/json",
+        headers={
+            "Content-Disposition": 'attachment; filename="models-export.json"',
+        },
+    )
+
+
+@router.post("/api/v1/models/import")
+async def import_models(
+    file: UploadFile = File(...),
+    db=Depends(get_db),
+):
+    content = await file.read()
+    try:
+        import_data = json.loads(content)
+    except json.JSONDecodeError as e:
+        raise HTTPException(status_code=400, detail=f"Invalid JSON: {str(e)}")
+
+    version = import_data.get("version", 1)
+    if version != 1:
+        raise HTTPException(status_code=400, detail=f"Unsupported export version: {version}")
+
+    models = import_data.get("models", [])
+    imported = 0
+    skipped = 0
+    errors = []
+
+    for model_data in models:
+        model_id = model_data.get("id")
+        if not model_id:
+            errors.append({"model": "unknown", "error": "Missing model id"})
+            continue
+
+        existing = await get_model_by_id(db, model_id)
+        if existing:
+            skipped += 1
+            continue
+
+        try:
+            from app.core.security import encrypt_api_key
+
+            api_key_encrypted = model_data.get("api_key_encrypted")
+            if not api_key_encrypted:
+                api_key_encrypted = None
+
+            model = Model(
+                id=model_id,
+                display_name=model_data.get("display_name", ""),
+                provider=model_data.get("provider", "custom"),
+                base_url=model_data.get("base_url"),
+                api_key_encrypted=api_key_encrypted,
+                capabilities=model_data.get("capabilities", []),
+                tags=model_data.get("tags", []),
+                cost_per_1k_input=model_data.get("cost_per_1k_input", 0.0),
+                cost_per_1k_output=model_data.get("cost_per_1k_output", 0.0),
+                max_tokens=model_data.get("max_tokens", 4096),
+                context_window=model_data.get("context_window", 8192),
+                rpm_limit=model_data.get("rpm_limit", 60),
+                tpm_limit=model_data.get("tpm_limit", 100000),
+                is_active=model_data.get("is_active", True),
+                priority=model_data.get("priority", 0),
+                timeout=model_data.get("timeout"),
+            )
+            db.add(model)
+            imported += 1
+        except Exception as e:
+            errors.append({"model": model_id, "error": str(e)})
+            logger.exception("Error importing model %s", model_id)
+
+    await db.commit()
+    logger.info("Imported %d models, skipped %d, errors %d", imported, skipped, len(errors))
+    return {
+        "imported": imported,
+        "skipped": skipped,
+        "errors": errors,
+    }
 
 
 @router.get("/api/v1/models/{model_id:path}")
