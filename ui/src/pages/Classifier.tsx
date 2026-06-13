@@ -40,6 +40,10 @@ interface SamplesResponse {
   page_size: number;
 }
 
+function truncate(text: string, len: number) {
+  return text.length > len ? text.slice(0, len) + "..." : text;
+}
+
 function TrainingDataTab() {
   const queryClient = useQueryClient();
   const [page, setPage] = useState(1);
