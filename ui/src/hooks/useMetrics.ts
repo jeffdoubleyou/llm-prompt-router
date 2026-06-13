@@ -32,10 +32,11 @@ export function useLiveMetrics() {
     });
 
     es.addEventListener("error", () => {
-      setConnected(false);
+      // EventSource fires 'error' on connection failure AND on reconnection attempts.
+      // Only mark as disconnected if the connection is truly closed (readyState === CLOSED),
+      // not when it is reconnecting (readyState === CONNECTING or OPEN).
+      setConnected(es.readyState !== EventSource.CLOSED);
     });
-
-    es.onopen = () => setConnected(true);
 
     return () => {
       es.close();
@@ -57,6 +58,9 @@ export function useLiveMetrics() {
       } catch {
         // ignore
       }
+    });
+    es.addEventListener("error", () => {
+      setConnected(es.readyState !== EventSource.CLOSED);
     });
   }, []);
 
