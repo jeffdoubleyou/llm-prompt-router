@@ -20,9 +20,6 @@ import { fetchClassifierStatus, fetchClassifierSamples, updateClassifierSample }
 
 type Tab = "status" | "training-data";
 
-const truncate = (text: string, len: number) =>
-  text.length > len ? text.slice(0, len) + "..." : text;
-
 interface ClassifierSample {
   id: string;
   prompt_text: string;
