@@ -10,7 +10,7 @@ from datetime import datetime, timedelta
 
 from fastapi import APIRouter, Depends, HTTPException, Query, UploadFile, File
 from fastapi.responses import StreamingResponse
-from sqlalchemy import func, select
+from sqlalchemy import Integer, func, select
 from sse_starlette.sse import EventSourceResponse
 
 from app.core.config import settings
@@ -246,7 +246,7 @@ async def metrics_summary(
             func.coalesce(func.sum(RequestLog.total_tokens), 0).label("total_tokens"),
             func.coalesce(func.sum(RequestLog.cost), 0).label("total_cost"),
             func.coalesce(func.avg(RequestLog.latency_ms), 0).label("avg_latency_ms"),
-            func.sum(RequestLog.is_error.cast(type(1))).label("error_count"),
+            func.sum(RequestLog.is_error.cast(Integer)).label("error_count"),
         ).where(RequestLog.created_at >= since).group_by(RequestLog.model_id)
     )
     rows = result.all()
@@ -278,7 +278,7 @@ async def metrics_time_series(
             func.count(RequestLog.id).label("requests"),
             func.coalesce(func.avg(RequestLog.latency_ms), 0).label("avg_latency"),
             func.coalesce(func.sum(RequestLog.cost), 0).label("cost"),
-            func.sum(RequestLog.is_error.cast(type(1))).label("errors"),
+                        func.sum(RequestLog.is_error.cast(Integer)).label("errors"),
         ).where(RequestLog.created_at >= since)
         .group_by("bucket", RequestLog.model_id)
         .order_by("bucket")
@@ -308,7 +308,7 @@ async def live_metrics(db=Depends(get_db)):
                         func.count(RequestLog.id).label("total"),
                         func.coalesce(func.sum(RequestLog.cost), 0).label("total_cost"),
                         func.coalesce(func.avg(RequestLog.latency_ms), 0).label("avg_latency"),
-                        func.sum(RequestLog.is_error.cast(type(1))).label("errors"),
+            func.sum(RequestLog.is_error.cast(Integer)).label("errors"),
                     ).where(RequestLog.created_at >= since_5min)
                 )
                 row = result.one()
