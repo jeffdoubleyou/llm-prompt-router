@@ -7,6 +7,7 @@ from dataclasses import dataclass, asdict
 from datetime import datetime
 
 import redis.asyncio as aioredis
+import redis.exceptions
 
 from app.core.config import settings
 
@@ -35,6 +36,10 @@ class RedisQueue:
             settings.redis_url,
             encoding="utf-8",
             decode_responses=True,
+            socket_timeout=10.0,
+            socket_connect_timeout=5.0,
+            retry_on_timeout=True,
+            health_check_interval=30,
         )
         logger.info("Connected to Redis")
 

@@ -5,6 +5,8 @@ import json
 import logging
 import time
 import uuid
+
+import redis.exceptions
 from datetime import datetime
 
 from sqlalchemy import select
@@ -116,6 +118,15 @@ async def worker_loop(worker_id: int) -> None:
                 "prompt_features": item.prompt_features,
                 "model_id": item.model_id,
             })
+        except (redis.exceptions.TimeoutError, redis.exceptions.ConnectionError) as e:
+            logger.warning("Worker %d: Redis connection issue (%s), reconnecting...", worker_id, e)
+            try:
+                await redis_queue.disconnect()
+                await redis_queue.connect()
+            except Exception:
+                logger.exception("Worker %d: reconnect failed, retrying in 5s", worker_id)
+                await asyncio.sleep(5)
+            continue
         except asyncio.CancelledError:
             logger.info("Worker %d shutting down", worker_id)
             break
