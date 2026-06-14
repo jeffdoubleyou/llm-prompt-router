@@ -20,6 +20,89 @@ from app.services.redis_queue import QueueItem, RedisQueue, redis_queue
 logger = logging.getLogger(__name__)
 
 
+def _detect_images(messages: list[dict]) -> bool:
+    """Detect whether any message contains image data.
+
+    Handles multiple formats:
+    - OpenAI array-of-parts: [{"type": "image_url", "image_url": {...}}, ...]
+    - OpenAI inline image: [{"type": "image", "image_url": {...}}, ...]
+    - Anthropic image: [{"type": "image", "source": {...}}, ...]
+    - Base64 data URIs in string content: "data:image/...;base64,..."
+    - Image URLs in string content: "https://example.com/image.png"
+    """
+    for m in messages:
+        content = m.get("content")
+        if not content:
+            continue
+
+        # Case 1: content is a list of parts (OpenAI/Anthropic multimodal format)
+        if isinstance(content, list):
+            for part in content:
+                if not isinstance(part, dict):
+                    continue
+                part_type = part.get("type", "")
+
+                # OpenAI array-of-parts: {"type": "image_url", "image_url": {...}}
+                if part_type == "image_url":
+                    return True
+
+                # OpenAI inline image: {"type": "image", "image_url": {...}}
+                if part_type == "image" and "image_url" in part:
+                    return True
+
+                # Anthropic image: {"type": "image", "source": {...}}
+                if part_type == "image" and "source" in part:
+                    return True
+
+                # OpenAI inline image with base64 source:
+                # {"type": "image", "source": {"type": "base64", "data": "..."}}
+                if part_type == "image" and "source" in part:
+                    source = part["source"]
+                    if isinstance(source, dict):
+                        data = source.get("data", "")
+                        if isinstance(data, str) and data.startswith("data:image/"):
+                            return True
+                        if isinstance(data, str) and ";base64," in data:
+                            return True
+
+                # Check for base64 data URIs nested in image_url
+                image_url = part.get("image_url", {})
+                if isinstance(image_url, dict):
+                    url = image_url.get("url", "")
+                    if isinstance(url, str) and _is_image_uri(url):
+                        return True
+
+        # Case 2: content is a string - check for base64 data URIs or image URLs
+        if isinstance(content, str):
+            if _is_image_uri(content):
+                return True
+
+    return False
+
+
+def _is_image_uri(text: str) -> bool:
+    """Check if a string contains a base64 data URI or image URL."""
+    if text.startswith("data:image/"):
+        return True
+    if ";base64," in text:
+        return True
+    # Check for common image URL patterns (with query params, anchors, or end of string)
+    image_url_patterns = [
+        ".png?", ".png&", ".png#", ".png",
+        ".jpg?", ".jpg&", ".jpg#", ".jpg",
+        ".jpeg?", ".jpeg&", ".jpeg#", ".jpeg",
+        ".gif?", ".gif&", ".gif#", ".gif",
+        ".webp?", ".webp&", ".webp#", ".webp",
+        ".svg?", ".svg&", ".svg#", ".svg",
+        ".bmp?", ".bmp&", ".bmp#", ".bmp",
+    ]
+    lower = text.lower()
+    for pattern in image_url_patterns:
+        if pattern in lower:
+            return True
+    return False
+
+
 def extract_features(messages: list[dict]) -> PromptFeatures:
     full_text = " ".join(
         m.get("content") or "" for m in messages if isinstance(m.get("content"), str)
@@ -28,14 +111,8 @@ def extract_features(messages: list[dict]) -> PromptFeatures:
 
     has_code = "```" in full_text or "`" in full_text or "def " in full_text or "class " in full_text
     has_urls = "http://" in text_lower or "https://" in text_lower
-    has_images = any(
-        isinstance(m.get("content"), list)
-        and any(
-            isinstance(part, dict) and part.get("type") == "image_url"
-            for part in m["content"]
-        )
-        for m in messages
-    )
+    has_images = _detect_images(messages)
+
     has_tool_calls = any(m.get("tool_calls") for m in messages) or any(
         m.get("tool_call_id") for m in messages
     )
