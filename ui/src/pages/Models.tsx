@@ -1,6 +1,6 @@
 import { useState } from "react";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
-import { Plus, Pencil, Trash2, RefreshCw, Power, PowerOff, Download, Upload } from "lucide-react";
+import { Plus, Pencil, Trash2, RefreshCw, Power, PowerOff, Download, Upload, Copy } from "lucide-react";
 import {
   fetchModels,
   createModel,
@@ -12,7 +12,7 @@ import {
   ModelEntry,
 } from "../lib/api";
 
-type ModalMode = "create" | "edit";
+type ModalMode = "create" | "edit" | "duplicate";
 
 const initialForm = {
   id: "",
@@ -132,6 +132,30 @@ export default function Models() {
     setForm({
       id: model.id,
       display_name: model.display_name,
+      provider: model.provider,
+      base_url: model.base_url || "",
+      api_key: "",
+      capabilities: model.capabilities || [],
+      tags: (model.tags || []).join(", "),
+      cost_per_1k_input: model.cost_per_1k_input,
+      cost_per_1k_output: model.cost_per_1k_output,
+      max_tokens: model.max_tokens,
+      context_window: model.context_window,
+      rpm_limit: model.rpm_limit,
+      tpm_limit: model.tpm_limit,
+      is_active: model.is_active,
+      priority: model.priority,
+      timeout: model.timeout ?? 0,
+    });
+    setShowModal(true);
+  };
+
+  const openDuplicate = (model: ModelEntry) => {
+    setModalMode("duplicate");
+    setEditingId(null);
+    setForm({
+      id: `${model.id}-copy`,
+      display_name: `${model.display_name} (Copy)`,
       provider: model.provider,
       base_url: model.base_url || "",
       api_key: "",
@@ -274,6 +298,13 @@ export default function Models() {
                         <Pencil size={14} />
                       </button>
                       <button
+                        onClick={() => openDuplicate(model)}
+                        className="p-1.5 rounded hover:bg-gray-700 text-gray-400 hover:text-brand-400"
+                        title="Duplicate model"
+                      >
+                        <Copy size={14} />
+                      </button>
+                      <button
                         onClick={() => {
                           if (window.confirm(`Delete model "${model.id}"?`)) {
                             deleteMutation.mutate(model.id);
@@ -307,7 +338,7 @@ export default function Models() {
           <div className="bg-gray-900 rounded-lg border border-gray-800 w-full max-w-2xl max-h-[85vh] overflow-y-auto">
             <div className="p-4 border-b border-gray-800 flex items-center justify-between">
               <h3 className="text-lg font-semibold">
-                {modalMode === "create" ? "Add Model" : "Edit Model"}
+                {modalMode === "create" ? "Add Model" : modalMode === "duplicate" ? "Duplicate Model" : "Edit Model"}
               </h3>
               <button
                 onClick={() => setShowModal(false)}
@@ -326,7 +357,7 @@ export default function Models() {
                     onChange={(e) =>
                       setForm({ ...form, id: e.target.value })
                     }
-                    disabled={modalMode === "edit"}
+                    disabled={modalMode !== "create"}
                     required
                     placeholder="gpt-4o"
                   />
@@ -592,7 +623,7 @@ export default function Models() {
                     createMutation.isPending || updateMutation.isPending
                   }
                 >
-                  {modalMode === "create" ? "Create Model" : "Update Model"}
+                   {modalMode === "create" || modalMode === "duplicate" ? "Create Model" : "Update Model"}
                 </button>
               </div>
             </form>
