@@ -118,6 +118,9 @@ class ModelRegistryEntry(BaseModel):
     tpm_limit: int = 100000
     is_active: bool = True
     priority: int = 0
+    estimated_parameters_billions: float | None = None
+    estimated_tokens_per_second: float | None = None
+    max_complexity_score: float | None = None
     created_at: datetime | None = None
     updated_at: datetime | None = None
 
@@ -139,6 +142,9 @@ class ModelRegistryCreate(BaseModel):
     is_active: bool = True
     priority: int = 0
     timeout: float | None = None
+    estimated_parameters_billions: float | None = None
+    estimated_tokens_per_second: float | None = None
+    max_complexity_score: float | None = None
 
 
 class ModelRegistryUpdate(BaseModel):
@@ -157,6 +163,9 @@ class ModelRegistryUpdate(BaseModel):
     is_active: bool | None = None
     priority: int | None = None
     timeout: float | None = None
+    estimated_parameters_billions: float | None = None
+    estimated_tokens_per_second: float | None = None
+    max_complexity_score: float | None = None
 
 
 class PromptFeatures(BaseModel):
@@ -169,6 +178,7 @@ class PromptFeatures(BaseModel):
     dominant_language: str = "unknown"
     reasoning_complexity: float = 0.0
     hour_of_day: int = 0
+    complexity_score: float = 0.0
 
 
 class ClassifierPrediction(BaseModel):
