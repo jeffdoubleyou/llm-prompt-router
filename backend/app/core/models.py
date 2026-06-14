@@ -16,7 +16,7 @@ class Role(str, Enum):
 
 class ChatMessage(BaseModel):
     role: Role
-    content: str | None = None
+    content: str | list | None = None
     name: str | None = None
     tool_calls: list[dict] | None = None
     tool_call_id: str | None = None
