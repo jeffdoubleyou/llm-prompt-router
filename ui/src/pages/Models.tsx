@@ -186,7 +186,7 @@ export default function Models() {
     if (!body.base_url) delete body.base_url;
     if (!form.api_key) delete body.api_key;
 
-    if (modalMode === "create") {
+    if (modalMode === "create" || modalMode === "duplicate") {
       createMutation.mutate(body);
     } else if (editingId) {
       updateMutation.mutate({ id: editingId, body });
@@ -357,7 +357,7 @@ export default function Models() {
                     onChange={(e) =>
                       setForm({ ...form, id: e.target.value })
                     }
-                    disabled={modalMode !== "create"}
+                    disabled={modalMode === "edit"}
                     required
                     placeholder="gpt-4o"
                   />
