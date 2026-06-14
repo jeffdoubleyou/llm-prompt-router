@@ -41,6 +41,9 @@ DEFAULT_MODELS = [
         "tpm_limit": 200000,
         "is_active": True,
         "priority": 10,
+        "estimated_parameters_billions": 13.0,
+        "estimated_tokens_per_second": 60.0,
+        "max_complexity_score": 0.5,
     },
     {
         "id": "gpt-4o",
@@ -57,6 +60,9 @@ DEFAULT_MODELS = [
         "tpm_limit": 200000,
         "is_active": True,
         "priority": 20,
+        "estimated_parameters_billions": 50.0,
+        "estimated_tokens_per_second": 40.0,
+        "max_complexity_score": 0.7,
     },
     {
         "id": "claude-sonnet-4-20250514",
@@ -73,6 +79,9 @@ DEFAULT_MODELS = [
         "tpm_limit": 500000,
         "is_active": True,
         "priority": 15,
+        "estimated_parameters_billions": 30.0,
+        "estimated_tokens_per_second": 35.0,
+        "max_complexity_score": 0.75,
     },
     {
         "id": "claude-opus-4-20250514",
@@ -89,6 +98,9 @@ DEFAULT_MODELS = [
         "tpm_limit": 500000,
         "is_active": True,
         "priority": 25,
+        "estimated_parameters_billions": 100.0,
+        "estimated_tokens_per_second": 15.0,
+        "max_complexity_score": 0.95,
     },
     {
         "id": "gemini-2.5-pro",
@@ -105,6 +117,9 @@ DEFAULT_MODELS = [
         "tpm_limit": 4000000,
         "is_active": True,
         "priority": 18,
+        "estimated_parameters_billions": 70.0,
+        "estimated_tokens_per_second": 45.0,
+        "max_complexity_score": 0.85,
     },
 ]
 

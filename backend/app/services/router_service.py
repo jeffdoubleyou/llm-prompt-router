@@ -103,6 +103,52 @@ def _is_image_uri(text: str) -> bool:
     return False
 
 
+def _compute_complexity_score(features: PromptFeatures) -> float:
+    """Compute an overall complexity score (0.0–1.0) for the given prompt features.
+
+    Combines token count, reasoning complexity, domain, code density, and
+    multimodal requirements into a single score that represents how
+    cognitively demanding the prompt is.
+    """
+    score = 0.0
+
+    # Token count contribution — longer prompts tend to be more complex
+    tokens = features.token_count
+    if tokens > 8000:
+        score += 0.30
+    elif tokens > 2000:
+        score += 0.20
+    elif tokens > 500:
+        score += 0.10
+    elif tokens > 100:
+        score += 0.05
+
+    # Reasoning complexity (0.0–1.0 from existing signal)
+    score += features.reasoning_complexity * 0.30
+
+    # Domain complexity — math and translation require structured reasoning
+    domain_scores = {
+        "code": 0.10,
+        "math": 0.15,
+        "translation": 0.08,
+    }
+    score += domain_scores.get(features.dominant_language, 0.0)
+
+    # Code density bonus — more code lines means more complex prompt
+    if features.has_code_blocks:
+        score += 0.08
+
+    # Multimodal requirements add complexity
+    if features.has_images:
+        score += 0.05
+    if features.has_tool_calls:
+        score += 0.05
+    if features.has_urls:
+        score += 0.02
+
+    return min(round(score, 3), 1.0)
+
+
 def extract_features(messages: list[dict]) -> PromptFeatures:
     full_text = " ".join(
         m.get("content") or "" for m in messages if isinstance(m.get("content"), str)
@@ -131,6 +177,19 @@ def extract_features(messages: list[dict]) -> PromptFeatures:
     import datetime as dt
     hour = dt.datetime.utcnow().hour
 
+    partial = PromptFeatures(
+        token_count=token_count,
+        char_length=len(full_text),
+        has_code_blocks=has_code,
+        has_urls=has_urls,
+        has_images=has_images,
+        has_tool_calls=has_tool_calls,
+        dominant_language=dominant_lang,
+        reasoning_complexity=reasoning_complexity,
+        hour_of_day=hour,
+    )
+    complexity = _compute_complexity_score(partial)
+
     return PromptFeatures(
         token_count=token_count,
         char_length=len(full_text),
@@ -141,6 +200,7 @@ def extract_features(messages: list[dict]) -> PromptFeatures:
         dominant_language=dominant_lang,
         reasoning_complexity=reasoning_complexity,
         hour_of_day=hour,
+        complexity_score=complexity,
     )
 
 
@@ -216,6 +276,76 @@ def match_model_by_rules(
     return best_model, confidence
 
 
+def match_model_by_complexity(
+    features: PromptFeatures,
+    models: list[Model],
+) -> tuple[Model | None, float]:
+    """Select the cheapest capable model that can handle the prompt's complexity.
+
+    Strategy:
+    1. Filter models whose max_complexity_score >= prompt complexity_score
+    2. Among capable models, prefer the one with lowest total cost
+    3. Use estimated_tokens_per_second as a tiebreaker (faster is better)
+    4. Fall back to rule-based matching for models without complexity metadata
+    """
+    # Compute complexity score if not already set (e.g., when called directly with PromptFeatures)
+    if features.complexity_score == 0.0:
+        features.complexity_score = _compute_complexity_score(features)
+    complexity = features.complexity_score
+    capable: list[tuple[Model, float, float]] = []  # (model, cost_score, speed_score)
+
+    for model in models:
+        if not model.is_active:
+            continue
+
+        caps = set(model.capabilities or [])
+
+        # Hard capability checks — model must support required features
+        if features.has_images and ModelCapability.vision.value not in caps:
+            continue
+        if features.has_tool_calls and ModelCapability.tool_calling.value not in caps:
+            continue
+        if features.token_count > model.context_window:
+            continue
+
+        # Check if model has complexity metadata
+        max_cx = model.max_complexity_score
+        if max_cx is not None:
+            # Model can handle this complexity?
+            if complexity > max_cx:
+                continue
+            # Score: prefer models whose capacity is just enough (not wasteful)
+            capacity_headroom = max_cx - complexity
+            # Cost score: lower cost = better (0.0 = cheapest, 1.0 = most expensive)
+            total_cost = model.cost_per_1k_input + model.cost_per_1k_output
+            cost_score = total_cost
+            # Speed score: higher tokens/sec = better
+            speed = model.estimated_tokens_per_second or 0.0
+            capable.append((model, cost_score, speed))
+        else:
+            # No complexity metadata — treat as capable with neutral cost
+            total_cost = model.cost_per_1k_input + model.cost_per_1k_output
+            speed = model.estimated_tokens_per_second or 0.0
+            capable.append((model, total_cost, speed))
+
+    if not capable:
+        return None, 0.0
+
+    # Sort: lowest cost first, then highest speed as tiebreaker
+    capable.sort(key=lambda x: (x[1], -x[2]))
+    best_model, best_cost, best_speed = capable[0]
+
+    # Confidence reflects how well the model's capacity matches the prompt
+    max_cx = best_model.max_complexity_score
+    if max_cx is not None:
+        capacity_ratio = (max_cx - complexity) / max(0.01, max_cx)
+        confidence = min(0.5 + capacity_ratio * 0.5, 1.0)
+    else:
+        confidence = 0.5
+
+    return best_model, confidence
+
+
 async def classify_and_route(
     request: ChatCompletionRequest,
     db: AsyncSession,
@@ -231,7 +361,21 @@ async def classify_and_route(
         logger.warning("No active models found, using default")
         return settings.default_model
 
-    matched_model, confidence = match_model_by_rules(features, models)
+    # Try complexity-based routing first (if models have complexity metadata)
+    has_complexity_metadata = any(m.max_complexity_score is not None for m in models)
+    if has_complexity_metadata:
+        cx_model, cx_confidence = match_model_by_complexity(features, models)
+        if cx_model:
+            logger.info(
+                "Complexity-matched model %s with confidence %.2f (complexity %.2f)",
+                cx_model.id, cx_confidence, features.complexity_score,
+            )
+            matched_model = cx_model
+            confidence = cx_confidence
+
+    # Fall back to rule-based matching if complexity routing didn't produce a match
+    if not matched_model:
+        matched_model, confidence = match_model_by_rules(features, models)
 
     if matched_model and confidence >= settings.classifier_min_confidence:
         logger.info("Rule-matched model %s with confidence %.2f", matched_model.id, confidence)

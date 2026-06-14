@@ -27,6 +27,9 @@ class Model(Base):
     is_active: Mapped[bool] = mapped_column(Boolean, default=True)
     priority: Mapped[int] = mapped_column(Integer, default=0)
     timeout: Mapped[float | None] = mapped_column(Float, nullable=True)
+    estimated_parameters_billions: Mapped[float | None] = mapped_column(Float, nullable=True)
+    estimated_tokens_per_second: Mapped[float | None] = mapped_column(Float, nullable=True)
+    max_complexity_score: Mapped[float | None] = mapped_column(Float, nullable=True)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=datetime.utcnow)
     updated_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), default=datetime.utcnow, onupdate=datetime.utcnow
@@ -49,6 +52,9 @@ class Model(Base):
             "is_active": self.is_active,
             "priority": self.priority,
             "timeout": self.timeout,
+            "estimated_parameters_billions": self.estimated_parameters_billions,
+            "estimated_tokens_per_second": self.estimated_tokens_per_second,
+            "max_complexity_score": self.max_complexity_score,
             "created_at": self.created_at.isoformat() if self.created_at else None,
             "updated_at": self.updated_at.isoformat() if self.updated_at else None,
         }
