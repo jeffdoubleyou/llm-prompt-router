@@ -70,6 +70,9 @@ async def create_model(entry: ModelRegistryCreate, db=Depends(get_db)):
         is_active=entry.is_active,
         priority=entry.priority,
         timeout=entry.timeout,
+        estimated_parameters_billions=entry.estimated_parameters_billions,
+        estimated_tokens_per_second=entry.estimated_tokens_per_second,
+        max_complexity_score=entry.max_complexity_score,
     )
     db.add(model)
     await db.commit()
@@ -187,6 +190,9 @@ async def import_models(
                 is_active=model_data.get("is_active", True),
                 priority=model_data.get("priority", 0),
                 timeout=model_data.get("timeout"),
+                estimated_parameters_billions=model_data.get("estimated_parameters_billions"),
+                estimated_tokens_per_second=model_data.get("estimated_tokens_per_second"),
+                max_complexity_score=model_data.get("max_complexity_score"),
             )
             db.add(model)
             imported += 1
