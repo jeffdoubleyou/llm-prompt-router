@@ -16,6 +16,9 @@ export interface ModelEntry {
   is_active: boolean;
   priority: number;
   timeout: number | null;
+  estimated_parameters_billions: number | null;
+  estimated_tokens_per_second: number | null;
+  max_complexity_score: number | null;
   created_at: string | null;
   updated_at: string | null;
 }

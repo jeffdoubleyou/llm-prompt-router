@@ -31,6 +31,9 @@ const initialForm = {
   is_active: true,
   priority: 0,
   timeout: 0,
+  estimated_parameters_billions: null as number | null,
+  estimated_tokens_per_second: null as number | null,
+  max_complexity_score: null as number | null,
 };
 
 const PROVIDERS = [
@@ -146,6 +149,9 @@ export default function Models() {
       is_active: model.is_active,
       priority: model.priority,
       timeout: model.timeout ?? 0,
+      estimated_parameters_billions: model.estimated_parameters_billions,
+      estimated_tokens_per_second: model.estimated_tokens_per_second,
+      max_complexity_score: model.max_complexity_score,
     });
     setShowModal(true);
   };
@@ -170,6 +176,9 @@ export default function Models() {
       is_active: model.is_active,
       priority: model.priority,
       timeout: model.timeout ?? 0,
+      estimated_parameters_billions: model.estimated_parameters_billions,
+      estimated_tokens_per_second: model.estimated_tokens_per_second,
+      max_complexity_score: model.max_complexity_score,
     });
     setShowModal(true);
   };
@@ -239,6 +248,9 @@ export default function Models() {
                 <th className="py-3 px-4 text-right">Cost (1k in/out)</th>
                 <th className="py-3 px-4 text-right">Priority</th>
                 <th className="py-3 px-4 text-right">Timeout (s)</th>
+                <th className="py-3 px-4 text-right">Params (B)</th>
+                <th className="py-3 px-4 text-right">Tokens/s</th>
+                <th className="py-3 px-4 text-right">Max Complexity</th>
                 <th className="py-3 px-4 text-center">Status</th>
                 <th className="py-3 px-4 text-right">Actions</th>
               </tr>
@@ -282,6 +294,21 @@ export default function Models() {
                   <td className="py-3 px-4 text-right text-xs">
                     {model.timeout !== null ? `${model.timeout}s` : "default"}
                   </td>
+                  <td className="py-3 px-4 text-right text-xs">
+                    {model.estimated_parameters_billions !== null
+                      ? model.estimated_parameters_billions.toFixed(1)
+                      : "–"}
+                  </td>
+                  <td className="py-3 px-4 text-right text-xs">
+                    {model.estimated_tokens_per_second !== null
+                      ? model.estimated_tokens_per_second.toFixed(1)
+                      : "–"}
+                  </td>
+                  <td className="py-3 px-4 text-right text-xs">
+                    {model.max_complexity_score !== null
+                      ? model.max_complexity_score.toFixed(2)
+                      : "–"}
+                  </td>
                   <td className="py-3 px-4 text-center">
                     {model.is_active ? (
                       <span className="badge-green">Active</span>
@@ -321,7 +348,7 @@ export default function Models() {
               {(data?.models ?? []).length === 0 && (
                 <tr>
                   <td
-                    colSpan={8}
+                    colSpan={11}
                     className="py-12 text-center text-gray-600"
                   >
                     No models registered. Click "Add Model" to get started.
@@ -582,6 +609,60 @@ export default function Models() {
                       })
                     }
                     placeholder="0"
+                  />
+                </div>
+              </div>
+              <div className="grid grid-cols-3 gap-4">
+                <div>
+                  <label className="label">Est. Parameters (B)</label>
+                  <input
+                    className="input"
+                    type="number"
+                    step="0.1"
+                    min="0"
+                    value={form.estimated_parameters_billions ?? ""}
+                    onChange={(e) =>
+                      setForm({
+                        ...form,
+                        estimated_parameters_billions: e.target.value === "" ? null : parseFloat(e.target.value) || null,
+                      })
+                    }
+                    placeholder="e.g. 30.0"
+                  />
+                </div>
+                <div>
+                  <label className="label">Est. Tokens/sec</label>
+                  <input
+                    className="input"
+                    type="number"
+                    step="0.1"
+                    min="0"
+                    value={form.estimated_tokens_per_second ?? ""}
+                    onChange={(e) =>
+                      setForm({
+                        ...form,
+                        estimated_tokens_per_second: e.target.value === "" ? null : parseFloat(e.target.value) || null,
+                      })
+                    }
+                    placeholder="e.g. 35.0"
+                  />
+                </div>
+                <div>
+                  <label className="label">Max Complexity (0-1)</label>
+                  <input
+                    className="input"
+                    type="number"
+                    step="0.01"
+                    min="0"
+                    max="1"
+                    value={form.max_complexity_score ?? ""}
+                    onChange={(e) =>
+                      setForm({
+                        ...form,
+                        max_complexity_score: e.target.value === "" ? null : (parseFloat(e.target.value) >= 0 && parseFloat(e.target.value) <= 1 ? parseFloat(e.target.value) : form.max_complexity_score),
+                      })
+                    }
+                    placeholder="e.g. 0.75"
                   />
                 </div>
               </div>
