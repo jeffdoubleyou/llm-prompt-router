@@ -9,6 +9,7 @@ import uuid
 from datetime import datetime, timedelta
 
 from fastapi import APIRouter, Depends, HTTPException, Query, UploadFile, File
+from sqlalchemy.exc import IntegrityError
 from fastapi.responses import StreamingResponse
 from sqlalchemy import Integer, func, select
 from sse_starlette.sse import EventSourceResponse
@@ -111,10 +112,17 @@ async def delete_model(model_id: str, db=Depends(get_db)):
     model = await get_model_by_id(db, model_id)
     if not model:
         raise HTTPException(status_code=404, detail=f"Model '{model_id}' not found")
-    await db.delete(model)
-    await db.commit()
-    logger.info("Deleted model: %s", model_id)
-    return {"deleted": model_id}
+    try:
+        await db.delete(model)
+        await db.commit()
+        logger.info("Deleted model: %s", model_id)
+        return {"deleted": model_id}
+    except IntegrityError:
+        await db.rollback()
+        raise HTTPException(
+            status_code=409,
+            detail=f"Cannot delete model '{model_id}' — it has associated request logs. Disable the model instead by setting is_active=false."
+        )
 
 
 @router.get("/api/v1/models/export")

@@ -1,4 +1,5 @@
 import { useState } from "react";
+import { toast } from "sonner";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { Plus, Pencil, Trash2, RefreshCw, Power, PowerOff, Download, Upload, Copy } from "lucide-react";
 import {
@@ -57,6 +58,7 @@ export default function Models() {
   const [showImportResult, setShowImportResult] = useState(false);
   const [importResult, setImportResult] = useState<ImportResult | null>(null);
   const [importing, setImporting] = useState(false);
+  const [deleteError, setDeleteError] = useState<string | null>(null);
 
   const { data, isLoading } = useQuery({
     queryKey: ["models"],
@@ -85,6 +87,14 @@ export default function Models() {
     mutationFn: (id: string) => deleteModel(id),
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ["models"] });
+      setDeleteError(null);
+    },
+    onError: (err: unknown) => {
+      const message = err instanceof Error && 'response' in err
+        ? (err as any).response?.detail || err.message
+        : 'Failed to delete model';
+      setDeleteError(message);
+      toast.error('Delete failed: ' + message);
     },
   });
 
@@ -333,6 +343,7 @@ export default function Models() {
                       </button>
                       <button
                         onClick={() => {
+                          setDeleteError(null);
                           if (window.confirm(`Delete model "${model.id}"?`)) {
                             deleteMutation.mutate(model.id);
                           }
@@ -359,6 +370,20 @@ export default function Models() {
           </table>
         </div>
       </div>
+
+      {deleteError && (
+        <div className="fixed top-4 right-4 z-50 bg-red-900/90 border border-red-700 text-red-100 px-4 py-3 rounded-lg max-w-md shadow-lg">
+          <div className="flex items-start gap-3">
+            <span className="flex-1">
+              <strong>Delete failed:</strong> {deleteError}
+            </span>
+            <button onClick={() => setDeleteError(null)} className="text-red-300 hover:text-white shrink-0">
+              ✕
+            </button>
+          </div>
+          <p className="text-xs text-red-300 mt-1">Disable the model instead by toggling its status.</p>
+        </div>
+      )}
 
       {showModal && (
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60">
