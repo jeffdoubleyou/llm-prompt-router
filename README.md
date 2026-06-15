@@ -128,8 +128,12 @@ npm run dev
 
 **ML Classifier Training:**
 
+See **[docs/ml-classifier-training.md](docs/ml-classifier-training.md)** for how routing, sample collection, and training connect.
+
 ```bash
-python -m ml.train
+# Inside the app container
+docker compose exec app python -m ml.train
+docker compose restart app   # reload model.joblib in workers
 ```
 
 ## API Endpoints
@@ -164,25 +168,23 @@ python -m ml.train
 
 ## Routing Logic
 
-1. **Feature extraction** — Every incoming prompt is analyzed for:
-   - Token count, character length
-   - Code blocks, URLs, images
-   - Tool/function calls
-   - Dominant language (code, math, translation, natural language)
-   - Reasoning complexity score
-   - Hour of day
+Every `POST /v1/chat/completions` request goes through feature extraction and rule-based routing. See **[docs/ml-classifier-training.md](docs/ml-classifier-training.md)** for the full picture including how ML training fits in.
 
-2. **Rule-based matching** — Active models are scored against prompt features:
-   - Vision models get +3 for image prompts
-   - Tool-calling models get +2 for tool calls
-   - Long-context models get +2 for large prompts
-   - Code-optimized models get +1.5 for code
-   - Reasoning models get +2 for complex prompts
-   - Priority field adds a bias
+### What routes requests (live path)
 
-3. **Confidence check** — If rule confidence ≥ threshold (default 0.60), route directly.
+1. **Feature extraction** — Token count, code/URL/image/tool signals, language, reasoning complexity, etc. (`router_service.extract_features`).
 
-4. **ML classifier fallback** — If confidence < threshold, enqueue to Redis. Background workers predict the best model using a trained HistGradientBoostingClassifier.
+2. **Complexity routing** — If models have `max_complexity_score`, pick the cheapest capable model for the prompt's complexity.
+
+3. **Rule-based routing** — Score models by capabilities (vision +3, tools +2, long context +2, code +1.5, reasoning +2, priority bias).
+
+4. **Route** — The highest-scoring model is used immediately. If confidence ≥ `CLASSIFIER_MIN_CONFIDENCE` (default 0.6), done.
+
+### What the ML classifier does today
+
+When confidence is **below** the threshold, the request is also enqueued to Redis. Background workers run the trained classifier and save a row to `classifier_samples` for later training. **The ML model does not change which model serves the request** — that is still the rule/complexity pick.
+
+To train: `python -m ml.train` (see [ML classifier guide](docs/ml-classifier-training.md)). Restart the app after training so workers reload `ml/model.joblib`.
 
 ## Configuration
 

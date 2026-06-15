@@ -45,10 +45,21 @@ from ml.feature_extraction import (
 from ml.schema import LANGUAGE_MAP, TrainingMetrics
 
 
+def _normalize_sync_db_url(db_url: str) -> str:
+    """Convert async or driverless PostgreSQL URLs for sync SQLAlchemy."""
+    if "+asyncpg" in db_url:
+        return db_url.replace("+asyncpg", "+psycopg2", 1)
+    if db_url.startswith("postgresql://"):
+        return db_url.replace("postgresql://", "postgresql+psycopg2://", 1)
+    if db_url.startswith("postgres://"):
+        return db_url.replace("postgres://", "postgresql+psycopg2://", 1)
+    return db_url
+
+
 def load_training_data(db_url: str) -> tuple[np.ndarray, np.ndarray, list[str]]:
     from sqlalchemy import create_engine, text
 
-    engine = create_engine(db_url)
+    engine = create_engine(_normalize_sync_db_url(db_url))
     query = text("""
         SELECT cs.prompt_text, cs.selected_model, cs.features
         FROM classifier_samples cs
