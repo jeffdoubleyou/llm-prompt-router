@@ -1,5 +1,4 @@
 import { useState } from "react";
-import { toast } from "sonner";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { Plus, Pencil, Trash2, RefreshCw, Power, PowerOff, Download, Upload, Copy } from "lucide-react";
 import {
@@ -94,7 +93,6 @@ export default function Models() {
         ? (err as any).response?.detail || err.message
         : 'Failed to delete model';
       setDeleteError(message);
-      toast.error('Delete failed: ' + message);
     },
   });
 
