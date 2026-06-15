@@ -20,7 +20,7 @@ from app.core.models import (
     Usage,
 )
 from app.models.db import Model
-from app.services.router_service import classify_and_route, extract_features, get_model_by_id, log_request
+from app.services.router_service import classify_and_route, extract_features, get_model_by_id, log_request, store_prompt_debug
 
 logger = logging.getLogger(__name__)
 
@@ -41,9 +41,12 @@ async def chat_completions(
     db=Depends(get_db),
 ):
     request_id = str(uuid.uuid4())
-    features = extract_features([m.model_dump(exclude_none=True) for m in chat_req.messages])
+    messages_dicts = [m.model_dump(exclude_none=True) for m in chat_req.messages]
+    features = extract_features(messages_dicts)
 
     model_id = await classify_and_route(chat_req, db)
+
+    await store_prompt_debug(request_id, model_id, messages_dicts, features)
 
     model_obj = await get_model_by_id(db, model_id)
     if not model_obj:

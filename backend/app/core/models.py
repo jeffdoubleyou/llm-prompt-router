@@ -242,3 +242,11 @@ class LiveMetric(BaseModel):
 
 class ClassifierSampleUpdate(BaseModel):
     is_correct: bool
+
+
+class PromptDebugEntry(BaseModel):
+    request_id: str
+    model_id: str | None = None
+    messages: list[dict]
+    features: dict
+    created_at: str

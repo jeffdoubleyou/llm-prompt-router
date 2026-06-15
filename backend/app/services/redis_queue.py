@@ -16,6 +16,7 @@ logger = logging.getLogger(__name__)
 QUEUE_KEY = "router:unclassified_queue"
 METRICS_KEY_PREFIX = "router:metrics:"
 PROCESSING_SET_KEY = "router:in_flight"
+PROMPT_DEBUG_KEY = "router:prompt_debug"
 
 
 @dataclass
@@ -92,6 +93,23 @@ class RedisQueue:
     async def get_all_metrics_keys(self) -> list[str]:
         keys = await self.client.keys(f"{METRICS_KEY_PREFIX}*")
         return [k.replace(METRICS_KEY_PREFIX, "") for k in keys]
+
+    async def store_prompt_debug(self, entry: dict) -> None:
+        max_stored = settings.prompt_debug_max_stored
+        if max_stored <= 0:
+            return
+        await self.client.lpush(PROMPT_DEBUG_KEY, json.dumps(entry))
+        await self.client.ltrim(PROMPT_DEBUG_KEY, 0, max_stored - 1)
+        if settings.prompt_debug_ttl_seconds > 0:
+            await self.client.expire(PROMPT_DEBUG_KEY, settings.prompt_debug_ttl_seconds)
+
+    async def get_prompt_debug(self, limit: int = 20) -> list[dict]:
+        max_stored = settings.prompt_debug_max_stored
+        if max_stored <= 0:
+            return []
+        limit = max(1, min(limit, max_stored))
+        items = await self.client.lrange(PROMPT_DEBUG_KEY, 0, limit - 1)
+        return [json.loads(item) for item in items]
 
 
 redis_queue = RedisQueue()

@@ -113,6 +113,20 @@ export interface QueueStatus {
   failed_total: number;
 }
 
+export interface PromptDebugEntry {
+  request_id: string;
+  model_id: string | null;
+  messages: Record<string, unknown>[];
+  features: Record<string, unknown>;
+  created_at: string;
+}
+
+export interface PromptDebugResponse {
+  prompts: PromptDebugEntry[];
+  count: number;
+  max_stored: number;
+}
+
 export interface MetricsSummary {
   model_id: string;
   total_requests: number;
@@ -242,6 +256,10 @@ export async function fetchClassifierStatus(): Promise<ClassifierStatus> {
 
 export async function fetchQueueStatus(): Promise<QueueStatus> {
   return fetcher("/api/v1/queue");
+}
+
+export async function fetchDebugPrompts(limit = 20): Promise<PromptDebugResponse> {
+  return fetcher(`/api/v1/debug/prompts?limit=${limit}`);
 }
 
 export function connectLiveMetrics(

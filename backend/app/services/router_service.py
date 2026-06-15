@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import logging
+import re
 import uuid
 from datetime import datetime
 
@@ -19,88 +20,87 @@ from app.services.redis_queue import QueueItem, RedisQueue, redis_queue
 
 logger = logging.getLogger(__name__)
 
+URL_PATTERN = re.compile(r"https?://[^\s,)'\"]+")
+IMAGE_DATA_URI_PATTERN = re.compile(r"data:image/[^;]+;base64,")
+MARKDOWN_IMAGE_PATTERN = re.compile(r"!\[.*?\]\(.*?\)")
+HTML_IMG_PATTERN = re.compile(r"<img[^>]*src=", re.IGNORECASE)
+
+# System prompts from clients (e.g. IDE rules) often contain documentation URLs
+# that are not part of the user's actual request.
+_URL_SCAN_ROLES = frozenset({"user", "assistant", "tool"})
+
+
+def _text_from_content(content: object) -> str:
+    if isinstance(content, str):
+        return content
+    if isinstance(content, list):
+        parts: list[str] = []
+        for part in content:
+            if isinstance(part, str):
+                parts.append(part)
+            elif isinstance(part, dict) and part.get("type") in ("text", "input_text"):
+                parts.append(part.get("text") or "")
+        return " ".join(parts)
+    return ""
+
+
+def _messages_to_text(messages: list[dict], roles: frozenset[str] | None = None) -> str:
+    texts: list[str] = []
+    for m in messages:
+        if roles is not None and m.get("role") not in roles:
+            continue
+        text = _text_from_content(m.get("content"))
+        if text:
+            texts.append(text)
+    return " ".join(texts)
+
+
+def _has_urls_in_messages(messages: list[dict]) -> bool:
+    """Detect URLs in conversation content, excluding system prompts."""
+    return bool(URL_PATTERN.search(_messages_to_text(messages, _URL_SCAN_ROLES)))
+
 
 def _detect_images(messages: list[dict]) -> bool:
-    """Detect whether any message contains image data.
+    """Detect whether any message contains actual image payload.
 
-    Handles multiple formats:
-    - OpenAI array-of-parts: [{"type": "image_url", "image_url": {...}}, ...]
-    - OpenAI inline image: [{"type": "image", "image_url": {...}}, ...]
-    - Anthropic image: [{"type": "image", "source": {...}}, ...]
-    - Base64 data URIs in string content: "data:image/...;base64,..."
-    - Image URLs in string content: "https://example.com/image.png"
+    Only matches structured multimodal parts and embedded image data — not
+    casual mentions of filenames or image URLs in plain text.
     """
     for m in messages:
         content = m.get("content")
         if not content:
             continue
 
-        # Case 1: content is a list of parts (OpenAI/Anthropic multimodal format)
         if isinstance(content, list):
             for part in content:
                 if not isinstance(part, dict):
                     continue
                 part_type = part.get("type", "")
 
-                # OpenAI array-of-parts: {"type": "image_url", "image_url": {...}}
                 if part_type == "image_url":
                     return True
 
-                # OpenAI inline image: {"type": "image", "image_url": {...}}
-                if part_type == "image" and "image_url" in part:
+                if part_type == "image" and ("image_url" in part or "source" in part):
                     return True
 
-                # Anthropic image: {"type": "image", "source": {...}}
-                if part_type == "image" and "source" in part:
-                    return True
-
-                # OpenAI inline image with base64 source:
-                # {"type": "image", "source": {"type": "base64", "data": "..."}}
-                if part_type == "image" and "source" in part:
-                    source = part["source"]
-                    if isinstance(source, dict):
-                        data = source.get("data", "")
-                        if isinstance(data, str) and data.startswith("data:image/"):
-                            return True
-                        if isinstance(data, str) and ";base64," in data:
-                            return True
-
-                # Check for base64 data URIs nested in image_url
                 image_url = part.get("image_url", {})
                 if isinstance(image_url, dict):
                     url = image_url.get("url", "")
-                    if isinstance(url, str) and _is_image_uri(url):
+                    if isinstance(url, str) and _is_image_data_uri(url):
                         return True
 
-        # Case 2: content is a string - check for base64 data URIs or image URLs
         if isinstance(content, str):
-            if _is_image_uri(content):
+            if IMAGE_DATA_URI_PATTERN.search(content):
+                return True
+            if MARKDOWN_IMAGE_PATTERN.search(content) or HTML_IMG_PATTERN.search(content):
                 return True
 
     return False
 
 
-def _is_image_uri(text: str) -> bool:
-    """Check if a string contains a base64 data URI or image URL."""
-    if text.startswith("data:image/"):
-        return True
-    if ";base64," in text:
-        return True
-    # Check for common image URL patterns (with query params, anchors, or end of string)
-    image_url_patterns = [
-        ".png?", ".png&", ".png#", ".png",
-        ".jpg?", ".jpg&", ".jpg#", ".jpg",
-        ".jpeg?", ".jpeg&", ".jpeg#", ".jpeg",
-        ".gif?", ".gif&", ".gif#", ".gif",
-        ".webp?", ".webp&", ".webp#", ".webp",
-        ".svg?", ".svg&", ".svg#", ".svg",
-        ".bmp?", ".bmp&", ".bmp#", ".bmp",
-    ]
-    lower = text.lower()
-    for pattern in image_url_patterns:
-        if pattern in lower:
-            return True
-    return False
+def _is_image_data_uri(text: str) -> bool:
+    """Check if a string is an embedded image data URI (not a plain https URL)."""
+    return text.startswith("data:image/") or bool(IMAGE_DATA_URI_PATTERN.search(text))
 
 
 def _compute_complexity_score(features: PromptFeatures) -> float:
@@ -150,13 +150,11 @@ def _compute_complexity_score(features: PromptFeatures) -> float:
 
 
 def extract_features(messages: list[dict]) -> PromptFeatures:
-    full_text = " ".join(
-        m.get("content") or "" for m in messages if isinstance(m.get("content"), str)
-    )
+    full_text = _messages_to_text(messages)
     text_lower = full_text.lower()
 
     has_code = "```" in full_text or "`" in full_text or "def " in full_text or "class " in full_text
-    has_urls = "http://" in text_lower or "https://" in text_lower
+    has_urls = _has_urls_in_messages(messages)
     has_images = _detect_images(messages)
 
     has_tool_calls = any(m.get("tool_calls") for m in messages) or any(
@@ -344,6 +342,43 @@ def match_model_by_complexity(
         confidence = 0.5
 
     return best_model, confidence
+
+
+def _sanitize_for_debug_storage(value: object, max_str_len: int = 2000) -> object:
+    """Redact large base64 blobs while keeping prompts readable for debugging."""
+    if isinstance(value, str):
+        if value.startswith("data:image/") or (
+            len(value) > 200 and ";base64," in value
+        ):
+            return f"[base64 image data, {len(value)} chars]"
+        if len(value) > max_str_len:
+            return f"{value[:max_str_len]}... [{len(value)} chars total]"
+        return value
+    if isinstance(value, dict):
+        return {k: _sanitize_for_debug_storage(v, max_str_len) for k, v in value.items()}
+    if isinstance(value, list):
+        return [_sanitize_for_debug_storage(item, max_str_len) for item in value]
+    return value
+
+
+async def store_prompt_debug(
+    request_id: str,
+    model_id: str | None,
+    messages: list[dict],
+    features: PromptFeatures,
+    queue: RedisQueue = redis_queue,
+) -> None:
+    try:
+        entry = {
+            "request_id": request_id,
+            "model_id": model_id,
+            "messages": _sanitize_for_debug_storage(messages),
+            "features": features.model_dump(),
+            "created_at": datetime.utcnow().isoformat(),
+        }
+        await queue.store_prompt_debug(entry)
+    except Exception:
+        logger.exception("Failed to store prompt debug entry for request %s", request_id)
 
 
 async def classify_and_route(

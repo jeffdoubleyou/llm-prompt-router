@@ -6,6 +6,7 @@ import {
   BarChart3,
   BrainCircuit,
   ListOrdered,
+  Bug,
 } from "lucide-react";
 import Dashboard from "./pages/Dashboard";
 import Models from "./pages/Models";
@@ -13,11 +14,13 @@ import Logs from "./pages/Logs";
 import Metrics from "./pages/Metrics";
 import Classifier from "./pages/Classifier";
 import Queue from "./pages/Queue";
+import Prompts from "./pages/Prompts";
 
 const navItems = [
   { to: "/", label: "Dashboard", icon: LayoutDashboard },
   { to: "/models", label: "Models", icon: Cpu },
   { to: "/logs", label: "Logs", icon: ScrollText },
+  { to: "/prompts", label: "Prompts", icon: Bug },
   { to: "/metrics", label: "Metrics", icon: BarChart3 },
   { to: "/classifier", label: "Classifier", icon: BrainCircuit },
   { to: "/queue", label: "Queue", icon: ListOrdered },
@@ -62,6 +65,7 @@ export default function App() {
             <Route path="/" element={<Dashboard />} />
             <Route path="/models" element={<Models />} />
             <Route path="/logs" element={<Logs />} />
+            <Route path="/prompts" element={<Prompts />} />
             <Route path="/metrics" element={<Metrics />} />
             <Route path="/classifier" element={<Classifier />} />
             <Route path="/queue" element={<Queue />} />

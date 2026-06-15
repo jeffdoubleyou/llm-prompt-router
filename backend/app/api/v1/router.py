@@ -247,6 +247,19 @@ async def get_logs(
     return {"logs": [l.to_dict() for l in logs], "total": total, "skip": skip, "limit": limit}
 
 
+@router.get("/api/v1/debug/prompts")
+async def get_debug_prompts(
+    limit: int = Query(20, ge=1, le=500),
+):
+    """Return recent incoming prompts stored in Redis for debugging."""
+    prompts = await redis_queue.get_prompt_debug(limit=limit)
+    return {
+        "prompts": prompts,
+        "count": len(prompts),
+        "max_stored": settings.prompt_debug_max_stored,
+    }
+
+
 @router.get("/api/v1/metrics/summary")
 async def metrics_summary(
     period_minutes: int = Query(60, ge=5, le=1440),

@@ -4,7 +4,12 @@ from __future__ import annotations
 
 import pytest
 
-from app.services.router_service import extract_features, _detect_images, _is_image_uri
+from app.services.router_service import (
+    extract_features,
+    _detect_images,
+    _has_urls_in_messages,
+    _is_image_data_uri,
+)
 
 
 class TestDetectImages:
@@ -19,6 +24,24 @@ class TestDetectImages:
     def test_plain_text_no_images(self):
         """Plain text without any image references should return False."""
         messages = [{"role": "user", "content": "Hello, world!"}]
+        assert _detect_images(messages) is False
+
+    def test_mentioned_image_filename_not_detected(self):
+        """Mentioning a filename should not count as an attached image."""
+        messages = [{"role": "user", "content": "Save the output as chart.png"}]
+        assert _detect_images(messages) is False
+
+    def test_mentioned_image_url_not_detected(self):
+        """A plain-text URL to an image is not multimodal image content."""
+        messages = [{
+            "role": "user",
+            "content": "Check this image: https://example.com/photo.jpg",
+        }]
+        assert _detect_images(messages) is False
+
+    def test_loose_base64_marker_not_detected(self):
+        """Loose ;base64, mentions without a data URI should not trigger."""
+        messages = [{"role": "user", "content": "iVBORw0KGgo;base64,someImageData"}]
         assert _detect_images(messages) is False
 
     # --- OpenAI array-of-parts: image_url ---
@@ -89,37 +112,11 @@ class TestDetectImages:
         }]
         assert _detect_images(messages) is True
 
-    def test_base64_in_string_no_prefix(self):
-        """Base64 data without data: prefix but with base64 marker."""
+    def test_markdown_image_in_string(self):
+        """Markdown image syntax in string content."""
         messages = [{
             "role": "user",
-            "content": "iVBORw0KGgo;base64,someImageData",
-        }]
-        assert _detect_images(messages) is True
-
-    # --- Image URLs in string content ---
-
-    def test_image_url_in_string(self):
-        """Image URL embedded in string content."""
-        messages = [{
-            "role": "user",
-            "content": "Check this image: https://example.com/photo.jpg",
-        }]
-        assert _detect_images(messages) is True
-
-    def test_image_url_png(self):
-        """PNG image URL in string content."""
-        messages = [{
-            "role": "user",
-            "content": "See attached: https://cdn.example.com/image.png",
-        }]
-        assert _detect_images(messages) is True
-
-    def test_image_url_webp(self):
-        """WebP image URL in string content."""
-        messages = [{
-            "role": "user",
-            "content": "View this: https://example.com/diagram.webp",
+            "content": "Look at this: ![diagram](https://example.com/diagram.png)",
         }]
         assert _detect_images(messages) is True
 
@@ -175,56 +172,43 @@ class TestDetectImages:
         assert _detect_images(messages) is True
 
 
-class TestIsImageUri:
-    """Tests for the _is_image_uri helper function."""
+class TestIsImageDataUri:
+    """Tests for the _is_image_data_uri helper function."""
 
     def test_data_uri_png(self):
-        """data:image/png;base64,..."""
-        assert _is_image_uri("data:image/png;base64,ABC") is True
+        assert _is_image_data_uri("data:image/png;base64,ABC") is True
 
     def test_data_uri_jpeg(self):
-        """data:image/jpeg;base64,..."""
-        assert _is_image_uri("data:image/jpeg;base64,ABC") is True
+        assert _is_image_data_uri("data:image/jpeg;base64,ABC") is True
 
-    def test_base64_marker(self):
-        """String containing ;base64,"""
-        assert _is_image_uri("some;base64,data") is True
+    def test_loose_base64_marker(self):
+        assert _is_image_data_uri("some;base64,data") is False
 
     def test_png_url(self):
-        """URL ending in .png."""
-        assert _is_image_uri("https://example.com/photo.png") is True
-
-    def test_jpeg_url(self):
-        """URL ending in .jpg."""
-        assert _is_image_uri("https://example.com/photo.jpg") is True
-
-    def test_gif_url(self):
-        """URL ending in .gif."""
-        assert _is_image_uri("https://example.com/animation.gif") is True
-
-    def test_webp_url(self):
-        """URL ending in .webp."""
-        assert _is_image_uri("https://example.com/image.webp") is True
-
-    def test_svg_url(self):
-        """URL ending in .svg."""
-        assert _is_image_uri("https://example.com/logo.svg") is True
-
-    def test_bmp_url(self):
-        """URL ending in .bmp."""
-        assert _is_image_uri("https://example.com/photo.bmp") is True
-
-    def test_png_with_query_params(self):
-        """PNG URL with query parameters."""
-        assert _is_image_uri("https://example.com/photo.png?width=100") is True
-
-    def test_plain_text_url(self):
-        """Non-image URL should return False."""
-        assert _is_image_uri("https://example.com/page.html") is False
+        assert _is_image_data_uri("https://example.com/photo.png") is False
 
     def test_plain_text(self):
-        """Plain text should return False."""
-        assert _is_image_uri("hello world") is False
+        assert _is_image_data_uri("hello world") is False
+
+
+class TestHasUrls:
+    def test_user_message_with_url(self):
+        messages = [{"role": "user", "content": "See https://example.com/docs"}]
+        assert _has_urls_in_messages(messages) is True
+
+    def test_system_message_urls_ignored(self):
+        messages = [
+            {"role": "system", "content": "Follow rules at https://docs.example.com/rules"},
+            {"role": "user", "content": "Hello"},
+        ]
+        assert _has_urls_in_messages(messages) is False
+
+    def test_url_in_multimodal_text_part(self):
+        messages = [{
+            "role": "user",
+            "content": [{"type": "text", "text": "Read https://example.com/page"}],
+        }]
+        assert _has_urls_in_messages(messages) is True
 
 
 class TestExtractFeaturesImages:
@@ -233,6 +217,14 @@ class TestExtractFeaturesImages:
     def test_plain_text_no_images(self):
         features = extract_features([{"role": "user", "content": "Hello"}])
         assert features.has_images is False
+        assert features.has_urls is False
+
+    def test_system_urls_do_not_set_has_urls(self):
+        features = extract_features([
+            {"role": "system", "content": "Docs: https://example.com/guide"},
+            {"role": "user", "content": "Summarize this function"},
+        ])
+        assert features.has_urls is False
 
     def test_openai_image_url_format(self):
         messages = [{
@@ -263,10 +255,11 @@ class TestExtractFeaturesImages:
         features = extract_features(messages)
         assert features.has_images is True
 
-    def test_image_url_in_text(self):
+    def test_image_url_in_text_not_flagged(self):
         messages = [{
             "role": "user",
             "content": "Check https://example.com/photo.jpg",
         }]
         features = extract_features(messages)
-        assert features.has_images is True
+        assert features.has_images is False
+        assert features.has_urls is True

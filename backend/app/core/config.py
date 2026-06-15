@@ -45,5 +45,8 @@ class Settings(BaseSettings):
 
     stats_window_minutes: int = 60
 
+    prompt_debug_max_stored: int = 100
+    prompt_debug_ttl_seconds: int = 86400
+
 
 settings = Settings()
