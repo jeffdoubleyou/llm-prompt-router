@@ -29,7 +29,16 @@ function FeatureBadges({ features }: { features: Record<string, unknown> }) {
         tokens: {String(features.token_count ?? 0)}
       </span>
       <span className="text-xs px-2 py-0.5 rounded-full bg-gray-800 text-gray-400">
-        complexity: {String(features.complexity_score ?? 0)}
+        task: {String(features.task_type ?? "unknown")}
+      </span>
+      <span className="text-xs px-2 py-0.5 rounded-full bg-gray-800 text-gray-400">
+        difficulty: {String(features.task_difficulty ?? 0)}
+      </span>
+      <span className="text-xs px-2 py-0.5 rounded-full bg-gray-800 text-gray-400">
+        context: {String(features.context_load ?? 0)}
+      </span>
+      <span className="text-xs px-2 py-0.5 rounded-full bg-gray-800 text-gray-400">
+        composite: {String(features.complexity_score ?? 0)}
       </span>
     </div>
   );

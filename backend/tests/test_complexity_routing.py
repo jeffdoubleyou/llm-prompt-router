@@ -78,25 +78,25 @@ class TestComplexityScore:
         score = _compute_complexity_score(features)
         assert score == 0.0
 
-    def test_short_simple_prompt(self):
+    def test_short_simple_prompt_legacy_fallback(self):
         features = PromptFeatures(token_count=150, char_length=40)
         score = _compute_complexity_score(features)
-        assert score == 0.05  # small token bonus (100 < tokens <= 500)
+        assert score == 0.05  # legacy token tier
 
-    def test_long_prompt(self):
+    def test_task_difficulty_used_when_set(self):
+        features = PromptFeatures(task_difficulty=0.72, requirement_load=0.2)
+        score = _compute_complexity_score(features)
+        assert score == 0.75  # 0.72 + 0.2 * 0.15
+
+    def test_long_prompt_legacy(self):
         features = PromptFeatures(token_count=5000, char_length=20000)
         score = _compute_complexity_score(features)
-        assert score >= 0.20  # token bonus for >2000 tokens
+        assert score >= 0.20
 
-    def test_very_long_prompt(self):
-        features = PromptFeatures(token_count=10000, char_length=40000)
-        score = _compute_complexity_score(features)
-        assert score >= 0.30  # token bonus for >8000 tokens
-
-    def test_high_reasoning_complexity(self):
+    def test_high_reasoning_legacy(self):
         features = PromptFeatures(reasoning_complexity=0.9)
         score = _compute_complexity_score(features)
-        assert score >= 0.27  # 0.9 * 0.30
+        assert score >= 0.27
 
     def test_math_domain(self):
         features = PromptFeatures(dominant_language="math")
@@ -155,16 +155,17 @@ class TestComplexityScore:
 
 class TestExtractFeatures:
     def test_returns_complexity_score(self):
-        messages = [{"role": "user", "content": "Hello world"}]
+        messages = [{"role": "user", "content": "Hello!"}]
         features = extract_features(messages)
         assert hasattr(features, "complexity_score")
         assert 0.0 <= features.complexity_score <= 1.0
+        assert features.task_type == "chitchat"
 
-    def test_longer_prompt_has_higher_complexity(self):
+    def test_longer_prompt_has_higher_context_load(self):
         short = extract_features([{"role": "user", "content": "hi"}])
         long_text = " ".join([f"word{i}" for i in range(500)])
         long = extract_features([{"role": "user", "content": long_text}])
-        assert long.complexity_score >= short.complexity_score
+        assert long.context_load >= short.context_load
 
 
 # ---------------------------------------------------------------------------
@@ -219,6 +220,8 @@ class TestMatchModelByComplexity:
             reasoning_complexity=0.8,
             dominant_language="math",
             has_code_blocks=True,
+            task_difficulty=0.75,
+            requirement_load=0.1,
         )
         model, confidence = match_model_by_complexity(features, models)
         assert model is not None

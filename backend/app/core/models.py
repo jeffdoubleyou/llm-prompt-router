@@ -178,6 +178,12 @@ class PromptFeatures(BaseModel):
     dominant_language: str = "unknown"
     reasoning_complexity: float = 0.0
     hour_of_day: int = 0
+    # Phase 1+2: split complexity dimensions
+    context_load: float = 0.0
+    task_difficulty: float = 0.0
+    requirement_load: float = 0.0
+    task_type: str = "unknown"
+    # Composite + legacy routing field (see get_routing_difficulty)
     complexity_score: float = 0.0
 
 

@@ -16,6 +16,7 @@ from app.core.models import (
     PromptFeatures,
 )
 from app.models.db import ClassifierSample, Model, RequestLog
+from app.services.prompt_complexity import analyze_prompt_complexity, get_routing_difficulty
 from app.services.redis_queue import QueueItem, RedisQueue, redis_queue
 
 logger = logging.getLogger(__name__)
@@ -103,16 +104,9 @@ def _is_image_data_uri(text: str) -> bool:
     return text.startswith("data:image/") or bool(IMAGE_DATA_URI_PATTERN.search(text))
 
 
-def _compute_complexity_score(features: PromptFeatures) -> float:
-    """Compute an overall complexity score (0.0–1.0) for the given prompt features.
-
-    Combines token count, reasoning complexity, domain, code density, and
-    multimodal requirements into a single score that represents how
-    cognitively demanding the prompt is.
-    """
+def _compute_legacy_complexity_score(features: PromptFeatures) -> float:
+    """Backward-compatible fallback when task_difficulty was not computed."""
     score = 0.0
-
-    # Token count contribution — longer prompts tend to be more complex
     tokens = features.token_count
     if tokens > 8000:
         score += 0.30
@@ -122,31 +116,28 @@ def _compute_complexity_score(features: PromptFeatures) -> float:
         score += 0.10
     elif tokens > 100:
         score += 0.05
-
-    # Reasoning complexity (0.0–1.0 from existing signal)
     score += features.reasoning_complexity * 0.30
-
-    # Domain complexity — math and translation require structured reasoning
-    domain_scores = {
-        "code": 0.10,
-        "math": 0.15,
-        "translation": 0.08,
-    }
+    domain_scores = {"code": 0.10, "math": 0.15, "translation": 0.08}
     score += domain_scores.get(features.dominant_language, 0.0)
-
-    # Code density bonus — more code lines means more complex prompt
     if features.has_code_blocks:
         score += 0.08
-
-    # Multimodal requirements add complexity
     if features.has_images:
         score += 0.05
     if features.has_tool_calls:
         score += 0.05
     if features.has_urls:
         score += 0.02
-
     return min(round(score, 3), 1.0)
+
+
+def _compute_complexity_score(features: PromptFeatures) -> float:
+    """Return routing difficulty, preferring content-aware task_difficulty."""
+    legacy = _compute_legacy_complexity_score(features)
+    return get_routing_difficulty(
+        features.task_difficulty,
+        features.requirement_load,
+        legacy_complexity_score=legacy,
+    )
 
 
 def extract_features(messages: list[dict]) -> PromptFeatures:
@@ -160,7 +151,6 @@ def extract_features(messages: list[dict]) -> PromptFeatures:
     has_tool_calls = any(m.get("tool_calls") for m in messages) or any(
         m.get("tool_call_id") for m in messages
     )
-    has_tools_in_request = False
 
     try:
         import tiktoken
@@ -170,23 +160,19 @@ def extract_features(messages: list[dict]) -> PromptFeatures:
         token_count = len(full_text) // 4
 
     dominant_lang = _detect_dominant_language(text_lower)
-    reasoning_complexity = _compute_reasoning_complexity(full_text, text_lower)
 
     import datetime as dt
     hour = dt.datetime.utcnow().hour
 
-    partial = PromptFeatures(
+    analysis = analyze_prompt_complexity(
+        messages,
         token_count=token_count,
-        char_length=len(full_text),
+        dominant_language=dominant_lang,
         has_code_blocks=has_code,
-        has_urls=has_urls,
         has_images=has_images,
         has_tool_calls=has_tool_calls,
-        dominant_language=dominant_lang,
-        reasoning_complexity=reasoning_complexity,
-        hour_of_day=hour,
+        full_text=full_text,
     )
-    complexity = _compute_complexity_score(partial)
 
     return PromptFeatures(
         token_count=token_count,
@@ -196,9 +182,13 @@ def extract_features(messages: list[dict]) -> PromptFeatures:
         has_images=has_images,
         has_tool_calls=has_tool_calls,
         dominant_language=dominant_lang,
-        reasoning_complexity=reasoning_complexity,
+        reasoning_complexity=analysis.reasoning_complexity,
         hour_of_day=hour,
-        complexity_score=complexity,
+        context_load=analysis.context_load,
+        task_difficulty=analysis.task_difficulty,
+        requirement_load=analysis.requirement_load,
+        task_type=analysis.task_type,
+        complexity_score=analysis.complexity_score,
     )
 
 
@@ -216,28 +206,9 @@ def _detect_dominant_language(text_lower: str) -> str:
 
 
 def _compute_reasoning_complexity(text: str, text_lower: str) -> float:
-    score = 0.0
-    reasoning_triggers = [
-        "explain", "reason", "think step by step", "analyze", "compare",
-        "contrast", "why", "how does", "what if", "derive", "prove",
-        "evaluate", "synthesize", "critique",
-    ]
-    for trigger in reasoning_triggers:
-        if trigger in text_lower:
-            score += 0.15
-    code_density = text.count("\n") / max(len(text), 1) * 100
-    if code_density > 10:
-        score += 0.2
-    question_marks = text.count("?")
-    score += min(question_marks * 0.05, 0.3)
-    complexity_keywords = [
-        "comprehensive", "detailed", "thorough", "in-depth", "complex",
-        "sophisticated", "multi-step", "multistep", "hierarchical",
-    ]
-    for kw in complexity_keywords:
-        if kw in text_lower:
-            score += 0.1
-    return min(round(score, 2), 1.0)
+    """Deprecated: use prompt_complexity.compute_reasoning_complexity."""
+    from app.services.prompt_complexity import compute_reasoning_complexity
+    return compute_reasoning_complexity(text)
 
 
 def match_model_by_rules(
@@ -258,9 +229,12 @@ def match_model_by_rules(
             score += 2.0
         if features.has_code_blocks and ModelCapability.code.value in caps:
             score += 1.5
-        if features.reasoning_complexity > 0.5 and ModelCapability.reasoning.value in caps:
+        reasoning_signal = (
+            features.task_difficulty if features.task_difficulty > 0 else features.reasoning_complexity
+        )
+        if reasoning_signal > 0.5 and ModelCapability.reasoning.value in caps:
             score += 2.0
-        if features.reasoning_complexity > 0.5 and "reasoning" in (model.tags or []):
+        if reasoning_signal > 0.5 and "reasoning" in (model.tags or []):
             score += 1.0
         score += model.priority * 0.1
         scored.append((model, score))
@@ -286,10 +260,8 @@ def match_model_by_complexity(
     3. Use estimated_tokens_per_second as a tiebreaker (faster is better)
     4. Fall back to rule-based matching for models without complexity metadata
     """
-    # Compute complexity score if not already set (e.g., when called directly with PromptFeatures)
-    if features.complexity_score == 0.0:
-        features.complexity_score = _compute_complexity_score(features)
-    complexity = features.complexity_score
+    # Compute routing difficulty (content-aware task_difficulty when available)
+    complexity = _compute_complexity_score(features)
     capable: list[tuple[Model, float, float]] = []  # (model, cost_score, speed_score)
 
     for model in models:
@@ -396,14 +368,17 @@ async def classify_and_route(
         logger.warning("No active models found, using default")
         return settings.default_model
 
+    matched_model = None
+    confidence = 0.0
+
     # Try complexity-based routing first (if models have complexity metadata)
     has_complexity_metadata = any(m.max_complexity_score is not None for m in models)
     if has_complexity_metadata:
         cx_model, cx_confidence = match_model_by_complexity(features, models)
         if cx_model:
             logger.info(
-                "Complexity-matched model %s with confidence %.2f (complexity %.2f)",
-                cx_model.id, cx_confidence, features.complexity_score,
+                "Complexity-matched model %s with confidence %.2f (task_difficulty %.2f, type %s)",
+                cx_model.id, cx_confidence, features.task_difficulty, features.task_type,
             )
             matched_model = cx_model
             confidence = cx_confidence
