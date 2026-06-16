@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import asyncio
 import logging
 from contextlib import asynccontextmanager
 
@@ -26,6 +27,19 @@ async def lifespan(app: FastAPI):
     logger.info("Starting LLM Prompt Router...")
     await init_db()
     await redis_queue.connect()
+
+    if settings.embedding_routing_enabled:
+        from app.services.embedding_complexity import warm_up_embedding_scorer
+
+        logger.info("Embedding routing enabled — warming up model...")
+        loaded = await asyncio.to_thread(warm_up_embedding_scorer)
+        if loaded:
+            logger.info("Embedding complexity scorer loaded")
+        else:
+            logger.warning(
+                "Embedding routing enabled but scorer failed to load; "
+                "falling back to heuristics only"
+            )
 
     try:
         tasks = await start_workers()

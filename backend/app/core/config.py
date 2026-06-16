@@ -48,5 +48,13 @@ class Settings(BaseSettings):
     prompt_debug_max_stored: int = 100
     prompt_debug_ttl_seconds: int = 86400
 
+    # Phase 3: embedding-based task difficulty (off by default)
+    embedding_routing_enabled: bool = False
+    embedding_model_name: str = "sentence-transformers/all-MiniLM-L6-v2"
+    embedding_blend_weight: float = 0.55
+    embedding_k_neighbors: int = 5
+    embedding_exemplars_path: str = ""
+    embedding_cache_size: int = 512
+
 
 settings = Settings()

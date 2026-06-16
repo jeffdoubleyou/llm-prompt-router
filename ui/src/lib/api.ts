@@ -59,6 +59,10 @@ export interface ClassifierStatus {
   training_data_count: number;
   last_trained_at: string | null;
   is_training: boolean;
+  embedding_routing_enabled?: boolean;
+  embedding_model_loaded?: boolean;
+  embedding_exemplar_count?: number;
+  embedding_model_name?: string | null;
 }
 
 export interface ClassifierSample {

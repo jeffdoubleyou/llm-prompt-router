@@ -189,6 +189,9 @@ def extract_features(messages: list[dict]) -> PromptFeatures:
         requirement_load=analysis.requirement_load,
         task_type=analysis.task_type,
         complexity_score=analysis.complexity_score,
+        heuristic_task_difficulty=analysis.heuristic_task_difficulty,
+        embedding_difficulty=analysis.embedding_difficulty,
+        embedding_routing_applied=analysis.embedding_routing_applied,
     )
 
 

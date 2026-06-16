@@ -197,6 +197,9 @@ To train: `python -m ml.train` (see [ML classifier guide](docs/ml-classifier-tra
 | `ENCRYPTION_KEY` | (required) | Fernet key for API key encryption |
 | `LOG_LEVEL` | `INFO` | Logging level |
 | `CLASSIFIER_MIN_CONFIDENCE` | `0.6` | Minimum confidence for routing |
+| `EMBEDDING_ROUTING_ENABLED` | `false` | Blend embedding k-NN difficulty into task routing |
+| `EMBEDDING_BLEND_WEIGHT` | `0.55` | Weight on embedding vs heuristic difficulty (0–1) |
+| `EMBEDDING_MODEL_NAME` | `sentence-transformers/all-MiniLM-L6-v2` | Local embedding model |
 | `WORKER_CONCURRENCY` | `4` | ML worker count |
 | `UPSTREAM_TIMEOUT` | `120.0` | Upstream API timeout (seconds) |
 | `DEFAULT_MODEL` | `gpt-4o-mini` | Fallback model |

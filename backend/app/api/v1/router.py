@@ -459,12 +459,20 @@ async def classifier_status(db=Depends(get_db)):
 
     accuracy = round(correct / max(total, 1), 4) if total > 0 else None
 
+    from app.services.embedding_complexity import embedding_status
+
+    emb = embedding_status()
+
     return ClassifierStatus(
         model_version="v1.0",
         accuracy=accuracy,
         training_data_count=total,
         last_trained_at=latest,
         is_training=False,
+        embedding_routing_enabled=emb["embedding_routing_enabled"],
+        embedding_model_loaded=emb["embedding_model_loaded"],
+        embedding_exemplar_count=emb["embedding_exemplar_count"],
+        embedding_model_name=emb["embedding_model_name"] if emb["embedding_routing_enabled"] else None,
     ).model_dump()
 
 

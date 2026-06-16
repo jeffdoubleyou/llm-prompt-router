@@ -1,0 +1,24 @@
+{
+  "exemplars": [
+    {"text": "Hello!", "difficulty": 0.08},
+    {"text": "Thanks, that worked.", "difficulty": 0.10},
+    {"text": "What is the capital of France?", "difficulty": 0.12},
+    {"text": "Translate 'good morning' to Spanish.", "difficulty": 0.22},
+    {"text": "List the main characters in this paragraph.", "difficulty": 0.25},
+    {"text": "Summarize this article in three bullet points.", "difficulty": 0.28},
+    {"text": "Extract all email addresses from the text below.", "difficulty": 0.30},
+    {"text": "Rewrite this sentence to be more concise.", "difficulty": 0.32},
+    {"text": "Add a docstring to this Python function.", "difficulty": 0.45},
+    {"text": "Implement a function that reverses a linked list.", "difficulty": 0.55},
+    {"text": "Refactor this module to use dependency injection.", "difficulty": 0.62},
+    {"text": "Review this pull request for security issues.", "difficulty": 0.65},
+    {"text": "Explain step by step how a binary search tree insertion works.", "difficulty": 0.58},
+    {"text": "Debug why this async handler intermittently drops messages.", "difficulty": 0.72},
+    {"text": "Find the race condition in these three functions.", "difficulty": 0.78},
+    {"text": "Trace through this stack trace and identify the root cause.", "difficulty": 0.80},
+    {"text": "Design a migration plan from monolith to microservices with trade-offs.", "difficulty": 0.82},
+    {"text": "Compare OAuth2 authorization code and client credentials flows, then recommend one.", "difficulty": 0.75},
+    {"text": "Prove that the greedy algorithm achieves the optimal solution for this problem.", "difficulty": 0.88},
+    {"text": "Research competing approaches, evaluate them systematically, and propose an architecture.", "difficulty": 0.85}
+  ]
+}

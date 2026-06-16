@@ -183,6 +183,10 @@ class PromptFeatures(BaseModel):
     task_difficulty: float = 0.0
     requirement_load: float = 0.0
     task_type: str = "unknown"
+    # Phase 3: embedding-enhanced difficulty (when EMBEDDING_ROUTING_ENABLED=true)
+    heuristic_task_difficulty: float = 0.0
+    embedding_difficulty: float | None = None
+    embedding_routing_applied: bool = False
     # Composite + legacy routing field (see get_routing_difficulty)
     complexity_score: float = 0.0
 
@@ -224,6 +228,10 @@ class ClassifierStatus(BaseModel):
     training_data_count: int = 0
     last_trained_at: datetime | None = None
     is_training: bool = False
+    embedding_routing_enabled: bool = False
+    embedding_model_loaded: bool = False
+    embedding_exemplar_count: int = 0
+    embedding_model_name: str | None = None
 
 
 class QueueStatus(BaseModel):

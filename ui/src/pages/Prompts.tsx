@@ -40,6 +40,11 @@ function FeatureBadges({ features }: { features: Record<string, unknown> }) {
       <span className="text-xs px-2 py-0.5 rounded-full bg-gray-800 text-gray-400">
         composite: {String(features.complexity_score ?? 0)}
       </span>
+      {features.embedding_routing_applied ? (
+        <span className="text-xs px-2 py-0.5 rounded-full bg-violet-500/20 text-violet-300">
+          embed: {String(features.embedding_difficulty ?? 0)}
+        </span>
+      ) : null}
     </div>
   );
 }

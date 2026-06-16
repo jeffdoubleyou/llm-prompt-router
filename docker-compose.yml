@@ -42,6 +42,7 @@ services:
       REDIS_URL: "redis://redis:6379/0"
       ENCRYPTION_KEY: "change-me-to-a-secure-random-key"
       LOG_LEVEL: "INFO"
+      EMBEDDING_ROUTING_ENABLED: "false"
     ports:
       - "8001:8000"
     depends_on:

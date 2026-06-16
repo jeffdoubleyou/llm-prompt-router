@@ -131,6 +131,9 @@ class ComplexityAnalysis:
     sub_task_count: int
     constraint_count: int
     reference_count: int
+    heuristic_task_difficulty: float = 0.0
+    embedding_difficulty: float | None = None
+    embedding_routing_applied: bool = False
 
 
 def user_text_from_messages(messages: list[dict]) -> str:
@@ -352,8 +355,9 @@ def analyze_prompt_complexity(
     has_images: bool,
     has_tool_calls: bool,
     full_text: str,
+    apply_embeddings: bool = True,
 ) -> ComplexityAnalysis:
-    """Full Phase 1+2 complexity analysis for a prompt."""
+    """Full complexity analysis for a prompt (Phases 1–3)."""
     user_text = user_text_from_messages(messages)
     text_for_reasoning = user_text if user_text.strip() else full_text
     full_text_lower = full_text.lower()
@@ -369,7 +373,7 @@ def analyze_prompt_complexity(
         user_text, full_text, messages,
     )
 
-    task_difficulty = compute_task_difficulty(
+    heuristic_task_difficulty = compute_task_difficulty(
         task_type,
         reasoning_complexity,
         dominant_language,
@@ -379,6 +383,29 @@ def analyze_prompt_complexity(
         conversation_bonus,
         has_images,
     )
+
+    task_difficulty = heuristic_task_difficulty
+    embedding_difficulty: float | None = None
+    embedding_routing_applied = False
+
+    if apply_embeddings:
+        from app.services.embedding_complexity import (
+            blend_task_difficulty,
+            embedding_difficulty_for_text,
+        )
+        from app.core.config import settings as app_settings
+
+        embed_text = text_for_reasoning
+        if embed_text.strip() and app_settings.embedding_routing_enabled:
+            embedding_difficulty = embedding_difficulty_for_text(embed_text)
+            if embedding_difficulty is not None:
+                task_difficulty = blend_task_difficulty(
+                    heuristic_task_difficulty,
+                    embedding_difficulty,
+                    app_settings.embedding_blend_weight,
+                )
+                embedding_routing_applied = True
+
     complexity_score = compute_composite_complexity(
         task_difficulty, requirement_load, context_load,
     )
@@ -393,4 +420,7 @@ def analyze_prompt_complexity(
         sub_task_count=sub_task_count,
         constraint_count=constraint_count,
         reference_count=reference_count,
+        heuristic_task_difficulty=heuristic_task_difficulty,
+        embedding_difficulty=embedding_difficulty,
+        embedding_routing_applied=embedding_routing_applied,
     )

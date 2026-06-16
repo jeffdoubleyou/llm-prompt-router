@@ -416,6 +416,17 @@ export default function Classifier() {
       color: data?.is_training ? "text-yellow-400" : "text-gray-400",
       bg: data?.is_training ? "bg-yellow-900/20" : "bg-gray-800",
     },
+    {
+      label: "Embedding Routing",
+      value: data?.embedding_routing_enabled
+        ? data.embedding_model_loaded
+          ? `On (${data.embedding_exemplar_count ?? 0} exemplars)`
+          : "Enabled (not loaded)"
+        : "Off",
+      icon: BrainCircuit,
+      color: data?.embedding_routing_enabled ? "text-violet-400" : "text-gray-500",
+      bg: data?.embedding_routing_enabled ? "bg-violet-900/20" : "bg-gray-800",
+    },
   ];
 
   return (
