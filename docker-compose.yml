@@ -43,6 +43,7 @@ services:
       ENCRYPTION_KEY: "change-me-to-a-secure-random-key"
       LOG_LEVEL: "INFO"
       EMBEDDING_ROUTING_ENABLED: "false"
+      UPSTREAM_QUEUE_ENABLED: "true"
     ports:
       - "8001:8000"
     depends_on:

@@ -262,6 +262,63 @@ export async function fetchQueueStatus(): Promise<QueueStatus> {
   return fetcher("/api/v1/queue");
 }
 
+export interface UpstreamQueueEntry {
+  request_id: string;
+  model_id: string;
+  base_url: string;
+  status: string;
+  position: number;
+  created_at: string;
+}
+
+export interface UpstreamQueueGroup {
+  base_url: string;
+  base_url_key: string;
+  waiting_count: number;
+  processing: UpstreamQueueEntry | null;
+  waiting: UpstreamQueueEntry[];
+}
+
+export interface UpstreamQueueStatus {
+  enabled: boolean;
+  base_urls: UpstreamQueueGroup[];
+  total_waiting: number;
+  total_processing: number;
+}
+
+export interface ModelRoutingEvaluation {
+  model_id: string;
+  eligible: boolean;
+  exclusion_reason: string | null;
+  max_complexity_score: number | null;
+  rule_score: number | null;
+  selected: boolean;
+}
+
+export interface DebugComplexityResponse {
+  model_id: string | null;
+  routing_method: string;
+  routing_confidence: number;
+  routing_difficulty: number;
+  would_enqueue_classifier: boolean;
+  features: Record<string, unknown>;
+  complexity_explanation: Record<string, unknown>;
+  model_evaluations: ModelRoutingEvaluation[];
+  complexity_candidate: string | null;
+  rule_candidate: string | null;
+}
+
+export async function fetchUpstreamQueueStatus(): Promise<UpstreamQueueStatus> {
+  return fetcher("/api/v1/upstream-queue");
+}
+
+export async function debugComplexity(messages: Record<string, unknown>[]): Promise<DebugComplexityResponse> {
+  return fetcher("/api/v1/debug/complexity", {
+    method: "POST",
+    body: JSON.stringify({ messages }),
+  });
+}
+
 export async function fetchDebugPrompts(limit = 20): Promise<PromptDebugResponse> {
   return fetcher(`/api/v1/debug/prompts?limit=${limit}`);
 }

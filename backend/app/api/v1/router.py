@@ -19,15 +19,26 @@ from app.core.database import get_db
 from app.core.models import (
     ClassifierSampleUpdate,
     ClassifierStatus,
+    ChatCompletionRequest,
+    DebugComplexityResponse,
+    DebugRouteRequest,
+    DebugRouteResponse,
     LiveMetric,
     ModelRegistryCreate,
     ModelRegistryEntry,
     ModelRegistryUpdate,
+    ModelRoutingEvaluation,
     QueueStatus,
 )
 from app.models.db import ClassifierSample, Model, RequestLog
 from app.services.redis_queue import redis_queue
-from app.services.router_service import extract_features, get_model_by_id, get_models
+from app.services.router_service import (
+    explain_routing,
+    extract_features,
+    get_model_by_id,
+    get_models,
+)
+from app.services.upstream_queue import upstream_queue_manager
 
 logger = logging.getLogger(__name__)
 
@@ -258,6 +269,48 @@ async def get_debug_prompts(
         "count": len(prompts),
         "max_stored": settings.prompt_debug_max_stored,
     }
+
+
+@router.post("/api/v1/debug/route", response_model=DebugRouteResponse)
+async def debug_route(body: DebugRouteRequest, db=Depends(get_db)):
+    """Dry-run routing: extract features and pick a model without calling upstream."""
+    result = await explain_routing(ChatCompletionRequest(messages=body.messages), db)
+    return DebugRouteResponse(
+        model_id=result["model_id"],
+        routing_difficulty=result["routing_difficulty"],
+        features=result["features"],
+    )
+
+
+@router.post("/api/v1/debug/complexity", response_model=DebugComplexityResponse)
+async def debug_complexity(body: DebugRouteRequest, db=Depends(get_db)):
+    """Full complexity and routing breakdown without calling upstream."""
+    result = await explain_routing(ChatCompletionRequest(messages=body.messages), db)
+    return DebugComplexityResponse(
+        model_id=result["model_id"],
+        routing_method=result["routing_method"],
+        routing_confidence=result["routing_confidence"],
+        routing_difficulty=result["routing_difficulty"],
+        would_enqueue_classifier=result["would_enqueue_classifier"],
+        features=result["features"],
+        complexity_explanation=result["complexity_explanation"],
+        model_evaluations=[ModelRoutingEvaluation(**e) for e in result["model_evaluations"]],
+        complexity_candidate=result["complexity_candidate"],
+        rule_candidate=result["rule_candidate"],
+    )
+
+
+@router.get("/api/v1/upstream-queue")
+async def upstream_queue_status():
+    """Pending and in-flight upstream requests per base URL."""
+    if not settings.upstream_queue_enabled:
+        return {
+            "enabled": False,
+            "base_urls": [],
+            "total_waiting": 0,
+            "total_processing": 0,
+        }
+    return upstream_queue_manager.snapshot()
 
 
 @router.get("/api/v1/metrics/summary")

@@ -189,6 +189,9 @@ def extract_features(messages: list[dict]) -> PromptFeatures:
         requirement_load=analysis.requirement_load,
         task_type=analysis.task_type,
         complexity_score=analysis.complexity_score,
+        sub_task_count=analysis.sub_task_count,
+        constraint_count=analysis.constraint_count,
+        reference_count=analysis.reference_count,
         heuristic_task_difficulty=analysis.heuristic_task_difficulty,
         embedding_difficulty=analysis.embedding_difficulty,
         embedding_routing_applied=analysis.embedding_routing_applied,
@@ -470,3 +473,169 @@ async def get_models(db: AsyncSession) -> list[Model]:
 async def get_model_by_id(db: AsyncSession, model_id: str) -> Model | None:
     result = await db.execute(select(Model).where(Model.id == model_id))
     return result.scalar_one_or_none()
+
+
+def _evaluate_models_for_routing(
+    features: PromptFeatures,
+    models: list[Model],
+    routing_difficulty: float,
+) -> list[dict]:
+    """Document which models pass/fail complexity and rule checks."""
+    from app.core.models import ModelCapability
+
+    evaluations: list[dict] = []
+    for model in models:
+        if not model.is_active:
+            evaluations.append({
+                "model_id": model.id,
+                "eligible": False,
+                "exclusion_reason": "inactive",
+                "max_complexity_score": model.max_complexity_score,
+                "rule_score": None,
+                "selected": False,
+            })
+            continue
+
+        caps = set(model.capabilities or [])
+        reasons: list[str] = []
+        if features.has_images and ModelCapability.vision.value not in caps:
+            reasons.append("missing vision capability")
+        if features.has_tool_calls and ModelCapability.tool_calling.value not in caps:
+            reasons.append("missing tool_calling capability")
+        if features.token_count > model.context_window:
+            reasons.append(f"token_count {features.token_count} > context_window {model.context_window}")
+
+        max_cx = model.max_complexity_score
+        if max_cx is not None and routing_difficulty > max_cx:
+            reasons.append(
+                f"routing_difficulty {routing_difficulty:.3f} > max_complexity_score {max_cx:.3f}"
+            )
+
+        rule_score = 0.0
+        if features.has_images and ModelCapability.vision.value in caps:
+            rule_score += 3.0
+        if features.has_tool_calls and ModelCapability.tool_calling.value in caps:
+            rule_score += 2.0
+        if features.token_count > 4000 and ModelCapability.long_context.value in caps:
+            rule_score += 2.0
+        if features.has_code_blocks and ModelCapability.code.value in caps:
+            rule_score += 1.5
+        reasoning_signal = (
+            features.task_difficulty if features.task_difficulty > 0 else features.reasoning_complexity
+        )
+        if reasoning_signal > 0.5 and ModelCapability.reasoning.value in caps:
+            rule_score += 2.0
+        if reasoning_signal > 0.5 and "reasoning" in (model.tags or []):
+            rule_score += 1.0
+        rule_score += model.priority * 0.1
+
+        eligible = not reasons
+        evaluations.append({
+            "model_id": model.id,
+            "eligible": eligible,
+            "exclusion_reason": "; ".join(reasons) if reasons else None,
+            "max_complexity_score": model.max_complexity_score,
+            "rule_score": round(rule_score, 2),
+            "selected": False,
+        })
+
+    return evaluations
+
+
+async def explain_routing(
+    request: ChatCompletionRequest,
+    db: AsyncSession,
+) -> dict:
+    """Dry-run routing with full complexity breakdown (no upstream, no classifier enqueue)."""
+    from app.services.prompt_complexity import build_complexity_explanation, get_routing_difficulty
+
+    messages_dicts = [m.model_dump(exclude_none=True) for m in request.messages]
+    features = extract_features(messages_dicts)
+    full_text = _messages_to_text(messages_dicts)
+
+    routing_difficulty = get_routing_difficulty(
+        features.task_difficulty,
+        features.requirement_load,
+        legacy_complexity_score=features.complexity_score,
+    )
+
+    complexity_explanation = build_complexity_explanation(
+        messages_dicts,
+        features,
+        token_count=features.token_count,
+        dominant_language=features.dominant_language,
+        has_code_blocks=features.has_code_blocks,
+        has_images=features.has_images,
+        has_tool_calls=features.has_tool_calls,
+        full_text=full_text,
+    )
+
+    result = await db.execute(select(Model).where(Model.is_active == True))
+    models = list(result.scalars().all())
+
+    if not models:
+        return {
+            "model_id": settings.default_model,
+            "routing_method": "default",
+            "routing_confidence": 0.0,
+            "routing_difficulty": routing_difficulty,
+            "would_enqueue_classifier": False,
+            "features": features,
+            "complexity_explanation": complexity_explanation,
+            "model_evaluations": [],
+            "complexity_candidate": None,
+            "rule_candidate": None,
+        }
+
+    evaluations = _evaluate_models_for_routing(features, models, routing_difficulty)
+
+    matched_model = None
+    confidence = 0.0
+    routing_method = "default"
+    complexity_candidate = None
+    rule_candidate = None
+
+    has_complexity_metadata = any(m.max_complexity_score is not None for m in models)
+    if has_complexity_metadata:
+        cx_model, cx_confidence = match_model_by_complexity(features, models)
+        if cx_model:
+            complexity_candidate = cx_model.id
+            matched_model = cx_model
+            confidence = cx_confidence
+            routing_method = "complexity"
+
+    rule_model, rule_confidence = match_model_by_rules(features, models)
+    if rule_model:
+        rule_candidate = rule_model.id
+
+    if not matched_model:
+        matched_model = rule_model
+        confidence = rule_confidence
+        routing_method = "rules"
+
+    model_id = matched_model.id if matched_model else settings.default_model
+    if not matched_model:
+        routing_method = "default"
+        model_id = settings.default_model
+
+    for ev in evaluations:
+        ev["selected"] = ev["model_id"] == model_id
+
+    would_enqueue = (
+        matched_model is not None
+        and confidence < settings.classifier_min_confidence
+        and routing_method != "default"
+    )
+
+    return {
+        "model_id": model_id,
+        "routing_method": routing_method,
+        "routing_confidence": round(confidence, 3),
+        "routing_difficulty": routing_difficulty,
+        "would_enqueue_classifier": would_enqueue,
+        "features": features,
+        "complexity_explanation": complexity_explanation,
+        "model_evaluations": evaluations,
+        "complexity_candidate": complexity_candidate,
+        "rule_candidate": rule_candidate,
+    }

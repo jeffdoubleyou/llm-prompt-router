@@ -424,3 +424,117 @@ def analyze_prompt_complexity(
         embedding_difficulty=embedding_difficulty,
         embedding_routing_applied=embedding_routing_applied,
     )
+
+
+def build_complexity_explanation(
+    messages: list[dict],
+    features: object,
+    *,
+    token_count: int,
+    dominant_language: str,
+    has_code_blocks: bool,
+    has_images: bool,
+    has_tool_calls: bool,
+    full_text: str,
+) -> dict:
+    """Human-readable breakdown of how complexity scores were calculated."""
+    from app.core.config import settings as app_settings
+    from app.core.models import PromptFeatures
+
+    assert isinstance(features, PromptFeatures)
+    user_text = user_text_from_messages(messages)
+    text_for_reasoning = user_text if user_text.strip() else full_text
+
+    sub_task_count, reference_count, code_bonus, conversation_bonus = compute_structural_signals(
+        user_text, full_text, messages,
+    )
+    task_type_prior = TASK_DIFFICULTY_PRIORS.get(
+        features.task_type, TASK_DIFFICULTY_PRIORS[TASK_UNKNOWN],
+    )
+    reasoning_component = round(features.reasoning_complexity * 0.25, 3)
+    structural_component = round(
+        min(sub_task_count * 0.04, 0.12)
+        + min(reference_count * 0.03, 0.09)
+        + code_bonus
+        + conversation_bonus,
+        3,
+    )
+    domain_bonus = {
+        "math": 0.12,
+        "code": 0.06,
+        "translation": 0.04,
+    }.get(dominant_language, 0.0)
+    multimodal_bonus = 0.04 if has_images else 0.0
+    requirement_bump = round(features.requirement_load * 0.15, 3)
+
+    routing_difficulty = get_routing_difficulty(
+        features.task_difficulty,
+        features.requirement_load,
+    )
+
+    explanation: dict = {
+        "user_message_preview": (user_text[:200] + "…") if len(user_text) > 200 else user_text,
+        "dimensions": {
+            "context_load": {
+                "value": features.context_load,
+                "description": "Log-scaled prompt size (token_count); does not affect routing difficulty directly",
+                "inputs": {"token_count": token_count},
+            },
+            "task_difficulty": {
+                "value": features.task_difficulty,
+                "description": "Content/cognitive difficulty used for model matching",
+            },
+            "requirement_load": {
+                "value": features.requirement_load,
+                "description": "Strict output constraints (must/json/tests/etc.)",
+                "inputs": {"constraint_pattern_matches": features.constraint_count},
+            },
+            "composite_complexity_score": {
+                "value": features.complexity_score,
+                "description": "0.65×task + 0.20×requirement + 0.15×context (logging/UI)",
+            },
+            "routing_difficulty": {
+                "value": routing_difficulty,
+                "description": "Compared to model max_complexity_score: task_difficulty + requirement_load×0.15",
+                "formula": f"{features.task_difficulty} + {features.requirement_load} × 0.15 = {routing_difficulty}",
+            },
+        },
+        "task_difficulty_breakdown": {
+            "task_type": features.task_type,
+            "task_type_prior": task_type_prior,
+            "structural_bonus": structural_component,
+            "structural_signals": {
+                "sub_task_count": sub_task_count,
+                "reference_count": reference_count,
+                "code_bonus": round(code_bonus, 3),
+                "conversation_bonus": round(conversation_bonus, 3),
+            },
+            "reasoning_complexity": features.reasoning_complexity,
+            "reasoning_component": reasoning_component,
+            "domain": dominant_language,
+            "domain_bonus": domain_bonus,
+            "multimodal_bonus": multimodal_bonus,
+            "heuristic_total": features.heuristic_task_difficulty,
+            "sum_before_cap": round(
+                task_type_prior + structural_component + reasoning_component
+                + domain_bonus + multimodal_bonus,
+                3,
+            ),
+        },
+        "embedding": {
+            "enabled": app_settings.embedding_routing_enabled,
+            "applied": features.embedding_routing_applied,
+            "embedding_difficulty": features.embedding_difficulty,
+            "blend_weight": app_settings.embedding_blend_weight if app_settings.embedding_routing_enabled else None,
+            "model": app_settings.embedding_model_name if app_settings.embedding_routing_enabled else None,
+        },
+        "signals": {
+            "has_code_blocks": has_code_blocks,
+            "has_images": has_images,
+            "has_tool_calls": has_tool_calls,
+            "has_urls": features.has_urls,
+            "dominant_language": dominant_language,
+            "reasoning_text_sample": (text_for_reasoning[:120] + "…") if len(text_for_reasoning) > 120 else text_for_reasoning,
+        },
+    }
+    return explanation

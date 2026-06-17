@@ -21,6 +21,7 @@ from app.core.models import (
 )
 from app.models.db import Model
 from app.services.router_service import classify_and_route, extract_features, get_model_by_id, log_request, store_prompt_debug
+from app.services.upstream_queue import upstream_queue_manager
 
 logger = logging.getLogger(__name__)
 
@@ -100,12 +101,41 @@ async def chat_completions(
     }
 
     if chat_req.stream:
-        return await _handle_stream(request_id, model_id, model_obj, upstream_url, payload, headers, db)
+        return await _handle_stream(
+            request_id, model_id, model_obj, base_url, upstream_url, payload, headers, db,
+        )
 
-    return await _handle_non_stream(request_id, model_id, model_obj, upstream_url, payload, headers, db)
+    return await _handle_non_stream(
+        request_id, model_id, model_obj, base_url, upstream_url, payload, headers, db,
+    )
+
+
+async def _with_upstream_queue(base_url: str, request_id: str, model_id: str, coro):
+    if settings.upstream_queue_enabled:
+        async with upstream_queue_manager.acquire(base_url, request_id, model_id):
+            return await coro()
+    return await coro()
 
 
 async def _handle_non_stream(
+    request_id: str,
+    model_id: str,
+    model_obj: Model,
+    base_url: str,
+    upstream_url: str,
+    payload: dict,
+    headers: dict,
+    db,
+):
+    async def _execute():
+        return await _handle_non_stream_inner(
+            request_id, model_id, model_obj, upstream_url, payload, headers, db,
+        )
+
+    return await _with_upstream_queue(base_url, request_id, model_id, _execute)
+
+
+async def _handle_non_stream_inner(
     request_id: str,
     model_id: str,
     model_obj: Model,
@@ -203,82 +233,107 @@ async def _handle_stream(
     request_id: str,
     model_id: str,
     model_obj: Model,
+    base_url: str,
     upstream_url: str,
     payload: dict,
     headers: dict,
     db,
 ):
     async def event_generator():
-        start_time = time.monotonic()
-        prompt_tokens = 0
-        completion_tokens = 0
-        first_chunk = True
+        async def stream_body():
+            async for event in _iter_stream_events(
+                request_id, model_id, model_obj, upstream_url, payload, headers, db,
+            ):
+                yield event
 
-        try:
-            timeout = _get_timeout(model_obj)
-            async with httpx.AsyncClient(timeout=timeout) as client:
-                async with client.stream("POST", upstream_url, json=payload, headers=headers) as resp:
-                    if resp.status_code != 200:
-                        error_text = await resp.aread()
-                        error_detail = f"Upstream returned {resp.status_code}: {error_text[:500].decode()}"
-                        logger.error("Stream request %s: %s", request_id, error_detail)
-                        yield {"event": "error", "data": json.dumps({"error": error_detail})}
-                        elapsed = (time.monotonic() - start_time) * 1000
-                        await log_request(
-                            db, request_id, model_id,
-                            prompt_tokens=0, completion_tokens=0,
-                            latency_ms=elapsed, cost=0.0,
-                            is_error=True, error_message=error_detail,
-                            model_used=model_id,
-                        )
-                        return
-
-                    async for line in resp.aiter_lines():
-                        if not line.startswith("data: "):
-                            continue
-                        data_str = line[6:].strip()
-                        if data_str == "[DONE]":
-                            break
-                        try:
-                            chunk = json.loads(data_str)
-                        except json.JSONDecodeError:
-                            continue
-
-                        usage = chunk.get("usage")
-                        if usage:
-                            prompt_tokens = usage.get("prompt_tokens", 0)
-                            completion_tokens = usage.get("completion_tokens", 0)
-
-                        chunk_id = chunk.get("id", f"chatcmpl-{request_id[:12]}")
-                        created = chunk.get("created", int(datetime.utcnow().timestamp()))
-                        yield {
-                            "event": "chunk",
-                            "data": json.dumps({
-                                "id": chunk_id,
-                                "object": "chat.completion.chunk",
-                                "created": created,
-                                "model": model_id,
-                                "choices": chunk.get("choices", []),
-                            }),
-                        }
-                        if first_chunk:
-                            first_chunk = False
-
-                    yield {"event": "done", "data": "[DONE]"}
-
-                    elapsed = (time.monotonic() - start_time) * 1000
-                    total_cost = (
-                        (prompt_tokens / 1000) * model_obj.cost_per_1k_input
-                        + (completion_tokens / 1000) * model_obj.cost_per_1k_output
-                    )
-                    await log_request(
-                        db, request_id, model_id,
-                        prompt_tokens=prompt_tokens, completion_tokens=completion_tokens,
-                        latency_ms=elapsed, cost=total_cost,
-                        model_used=model_id,
-                    )
-        except Exception as exc:
-            logger.exception("Stream error for request %s", request_id)
-            yield {"event": "error", "data": json.dumps({"error": str(exc)})}
+        if settings.upstream_queue_enabled:
+            async with upstream_queue_manager.acquire(base_url, request_id, model_id):
+                async for event in stream_body():
+                    yield event
+        else:
+            async for event in stream_body():
+                yield event
 
     return EventSourceResponse(event_generator())
+
+
+async def _iter_stream_events(
+    request_id: str,
+    model_id: str,
+    model_obj: Model,
+    upstream_url: str,
+    payload: dict,
+    headers: dict,
+    db,
+):
+    start_time = time.monotonic()
+    prompt_tokens = 0
+    completion_tokens = 0
+    first_chunk = True
+
+    try:
+        timeout = _get_timeout(model_obj)
+        async with httpx.AsyncClient(timeout=timeout) as client:
+            async with client.stream("POST", upstream_url, json=payload, headers=headers) as resp:
+                if resp.status_code != 200:
+                    error_text = await resp.aread()
+                    error_detail = f"Upstream returned {resp.status_code}: {error_text[:500].decode()}"
+                    logger.error("Stream request %s: %s", request_id, error_detail)
+                    yield {"event": "error", "data": json.dumps({"error": error_detail})}
+                    elapsed = (time.monotonic() - start_time) * 1000
+                    await log_request(
+                        db, request_id, model_id,
+                        prompt_tokens=0, completion_tokens=0,
+                        latency_ms=elapsed, cost=0.0,
+                        is_error=True, error_message=error_detail,
+                        model_used=model_id,
+                    )
+                    return
+
+                async for line in resp.aiter_lines():
+                    if not line.startswith("data: "):
+                        continue
+                    data_str = line[6:].strip()
+                    if data_str == "[DONE]":
+                        break
+                    try:
+                        chunk = json.loads(data_str)
+                    except json.JSONDecodeError:
+                        continue
+
+                    usage = chunk.get("usage")
+                    if usage:
+                        prompt_tokens = usage.get("prompt_tokens", 0)
+                        completion_tokens = usage.get("completion_tokens", 0)
+
+                    chunk_id = chunk.get("id", f"chatcmpl-{request_id[:12]}")
+                    created = chunk.get("created", int(datetime.utcnow().timestamp()))
+                    yield {
+                        "event": "chunk",
+                        "data": json.dumps({
+                            "id": chunk_id,
+                            "object": "chat.completion.chunk",
+                            "created": created,
+                            "model": model_id,
+                            "choices": chunk.get("choices", []),
+                        }),
+                    }
+                    if first_chunk:
+                        first_chunk = False
+
+                yield {"event": "done", "data": "[DONE]"}
+
+                elapsed = (time.monotonic() - start_time) * 1000
+                total_cost = (
+                    (prompt_tokens / 1000) * model_obj.cost_per_1k_input
+                    + (completion_tokens / 1000) * model_obj.cost_per_1k_output
+                )
+                await log_request(
+                    db, request_id, model_id,
+                    prompt_tokens=prompt_tokens, completion_tokens=completion_tokens,
+                    latency_ms=elapsed, cost=total_cost,
+                    model_used=model_id,
+                )
+    except Exception as exc:
+        logger.exception("Stream error for request %s", request_id)
+        yield {"event": "error", "data": json.dumps({"error": str(exc)})}

@@ -56,5 +56,8 @@ class Settings(BaseSettings):
     embedding_exemplars_path: str = ""
     embedding_cache_size: int = 512
 
+    # Serialize upstream requests per base URL (e.g. llama.cpp single-model servers)
+    upstream_queue_enabled: bool = False
+
 
 settings = Settings()

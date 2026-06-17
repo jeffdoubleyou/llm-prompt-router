@@ -178,6 +178,9 @@ class PromptFeatures(BaseModel):
     dominant_language: str = "unknown"
     reasoning_complexity: float = 0.0
     hour_of_day: int = 0
+    sub_task_count: int = 0
+    constraint_count: int = 0
+    reference_count: int = 0
     # Phase 1+2: split complexity dimensions
     context_load: float = 0.0
     task_difficulty: float = 0.0
@@ -264,3 +267,35 @@ class PromptDebugEntry(BaseModel):
     messages: list[dict]
     features: dict
     created_at: str
+
+
+class DebugRouteRequest(BaseModel):
+    messages: list[ChatMessage]
+
+
+class DebugRouteResponse(BaseModel):
+    model_id: str | None
+    routing_difficulty: float
+    features: PromptFeatures
+
+
+class ModelRoutingEvaluation(BaseModel):
+    model_id: str
+    eligible: bool
+    exclusion_reason: str | None = None
+    max_complexity_score: float | None = None
+    rule_score: float | None = None
+    selected: bool = False
+
+
+class DebugComplexityResponse(BaseModel):
+    model_id: str | None
+    routing_method: str
+    routing_confidence: float
+    routing_difficulty: float
+    would_enqueue_classifier: bool
+    features: PromptFeatures
+    complexity_explanation: dict
+    model_evaluations: list[ModelRoutingEvaluation]
+    complexity_candidate: str | None = None
+    rule_candidate: str | None = None
