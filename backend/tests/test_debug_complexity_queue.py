@@ -107,3 +107,22 @@ async def test_upstream_queue_status_endpoint():
         resp = await client.get("/api/v1/upstream-queue")
     assert resp.status_code == 200
     assert resp.json()["enabled"] is False
+
+
+@pytest.mark.asyncio
+async def test_upstream_queue_snapshot_omits_idle_base_urls():
+    upstream_queue_manager._semaphores.clear()
+    upstream_queue_manager._waiting.clear()
+    upstream_queue_manager._processing.clear()
+
+    async with upstream_queue_manager.acquire(
+        "http://localhost:8080/v1", "req-a", "model-a",
+    ):
+        snap = upstream_queue_manager.snapshot()
+        assert snap["total_processing"] == 1
+        assert len(snap["base_urls"]) == 1
+
+    idle = upstream_queue_manager.snapshot()
+    assert idle["total_processing"] == 0
+    assert idle["total_waiting"] == 0
+    assert idle["base_urls"] == []

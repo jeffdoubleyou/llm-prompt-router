@@ -21,6 +21,7 @@ import {
 } from "lucide-react";
 import { useLiveMetrics } from "../hooks/useMetrics";
 import { fetchDashboardMetrics } from "../lib/api";
+import UpstreamQueuePanel from "../components/UpstreamQueuePanel";
 
 const formatNum = (n: number) =>
   n >= 1000000
@@ -119,6 +120,8 @@ export default function Dashboard() {
           </div>
         ))}
       </div>
+
+      <UpstreamQueuePanel compact />
 
       {metric && (
         <div className="card">

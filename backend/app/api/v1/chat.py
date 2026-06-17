@@ -239,20 +239,20 @@ async def _handle_stream(
     headers: dict,
     db,
 ):
+    queue_slot = None
+    if settings.upstream_queue_enabled:
+        queue_slot = upstream_queue_manager.acquire(base_url, request_id, model_id)
+        await queue_slot.__aenter__()
+
     async def event_generator():
-        async def stream_body():
+        try:
             async for event in _iter_stream_events(
                 request_id, model_id, model_obj, upstream_url, payload, headers, db,
             ):
                 yield event
-
-        if settings.upstream_queue_enabled:
-            async with upstream_queue_manager.acquire(base_url, request_id, model_id):
-                async for event in stream_body():
-                    yield event
-        else:
-            async for event in stream_body():
-                yield event
+        finally:
+            if queue_slot is not None:
+                await queue_slot.__aexit__(None, None, None)
 
     return EventSourceResponse(event_generator())
 

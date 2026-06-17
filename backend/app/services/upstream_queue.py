@@ -112,8 +112,10 @@ class UpstreamQueueManager:
         for key in sorted(keys):
             waiting = [e.to_dict() for e in self._waiting.get(key, [])]
             active = self._processing.get(key)
+            if not waiting and active is None:
+                continue
             groups.append({
-                "base_url": active.base_url if active else (waiting[0]["base_url"] if waiting else key),
+                "base_url": active.base_url if active else waiting[0]["base_url"],
                 "base_url_key": key,
                 "waiting_count": len(waiting),
                 "processing": active.to_dict() if active else None,
