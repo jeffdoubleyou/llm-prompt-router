@@ -180,7 +180,7 @@ Every `POST /v1/chat/completions` request goes through feature extraction and ru
 ### What routes requests (live path)
 
 1. **Feature extraction** — Token count, code/URL/image/tool signals, language, reasoning complexity, etc. (`router_service.extract_features`).
-2. **Complexity routing** — If models have `max_complexity_score`, pick the cheapest capable model for the prompt's complexity.
+2. **Complexity routing** — If models have `max_complexity_score`, pick the **smallest** capable model (lowest `max_complexity_score` that still fits the prompt's routing difficulty), then cost, then speed.
 3. **Rule-based routing** — Score models by capabilities (vision +3, tools +2, long context +2, code +1.5, reasoning +2, priority bias).
 4. **Route** — The highest-scoring model is used immediately. If confidence ≥ `CLASSIFIER_MIN_CONFIDENCE` (default 0.6), done.
 

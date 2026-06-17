@@ -309,8 +309,8 @@ class TestMatchModelByComplexity:
         # Should pick the cheaper model with metadata
         assert model.id == "with-metadata"
 
-    def test_same_cost_faster_model_wins(self):
-        """When costs are equal, prefer the faster model."""
+    def test_same_capacity_faster_model_wins(self):
+        """When capacity tier and cost are equal, prefer the faster model."""
         models = [
             _make_model(
                 model_id="slow",
@@ -331,6 +331,29 @@ class TestMatchModelByComplexity:
         model, _ = match_model_by_complexity(features, models)
         assert model is not None
         assert model.id == "fast"
+
+    def test_zero_cost_prefers_smallest_capable_model(self):
+        """Local models with $0 cost should not route to the largest/fastest model."""
+        models = [
+            _make_model(
+                model_id="small",
+                cost_per_1k_input=0.0,
+                cost_per_1k_output=0.0,
+                max_complexity_score=0.6,
+                estimated_tokens_per_second=12.0,
+            ),
+            _make_model(
+                model_id="large",
+                cost_per_1k_input=0.0,
+                cost_per_1k_output=0.0,
+                max_complexity_score=0.95,
+                estimated_tokens_per_second=35.0,
+            ),
+        ]
+        features = PromptFeatures(task_difficulty=0.58, requirement_load=0.0)
+        model, _ = match_model_by_complexity(features, models)
+        assert model is not None
+        assert model.id == "small"
 
     def test_tool_call_capability_required(self):
         """Tool call prompts should skip models without tool_calling capability."""

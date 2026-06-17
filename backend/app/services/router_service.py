@@ -258,17 +258,17 @@ def match_model_by_complexity(
     features: PromptFeatures,
     models: list[Model],
 ) -> tuple[Model | None, float]:
-    """Select the cheapest capable model that can handle the prompt's complexity.
+    """Select the smallest capable model that can handle the prompt's complexity.
 
     Strategy:
-    1. Filter models whose max_complexity_score >= prompt complexity_score
-    2. Among capable models, prefer the one with lowest total cost
-    3. Use estimated_tokens_per_second as a tiebreaker (faster is better)
-    4. Fall back to rule-based matching for models without complexity metadata
+    1. Filter models whose max_complexity_score >= routing difficulty
+    2. Among capable models, prefer the lowest max_complexity_score (smallest sufficient model)
+    3. Then lowest total cost, then highest estimated tokens/sec
+    4. Models without complexity metadata are last-resort fallbacks
     """
-    # Compute routing difficulty (content-aware task_difficulty when available)
     complexity = _compute_complexity_score(features)
-    capable: list[tuple[Model, float, float]] = []  # (model, cost_score, speed_score)
+    # (model, capacity_tier, cost, speed) — lower capacity_tier is a smaller model
+    capable: list[tuple[Model, float, float, float]] = []
 
     for model in models:
         if not model.is_active:
@@ -276,7 +276,6 @@ def match_model_by_complexity(
 
         caps = set(model.capabilities or [])
 
-        # Hard capability checks — model must support required features
         if features.has_images and ModelCapability.vision.value not in caps:
             continue
         if features.has_tool_calls and ModelCapability.tool_calling.value not in caps:
@@ -284,34 +283,25 @@ def match_model_by_complexity(
         if features.token_count > model.context_window:
             continue
 
-        # Check if model has complexity metadata
         max_cx = model.max_complexity_score
         if max_cx is not None:
-            # Model can handle this complexity?
             if complexity > max_cx:
                 continue
-            # Score: prefer models whose capacity is just enough (not wasteful)
-            capacity_headroom = max_cx - complexity
-            # Cost score: lower cost = better (0.0 = cheapest, 1.0 = most expensive)
-            total_cost = model.cost_per_1k_input + model.cost_per_1k_output
-            cost_score = total_cost
-            # Speed score: higher tokens/sec = better
-            speed = model.estimated_tokens_per_second or 0.0
-            capable.append((model, cost_score, speed))
+            capacity_tier = max_cx
         else:
-            # No complexity metadata — treat as capable with neutral cost
-            total_cost = model.cost_per_1k_input + model.cost_per_1k_output
-            speed = model.estimated_tokens_per_second or 0.0
-            capable.append((model, total_cost, speed))
+            # No metadata — only use when nothing with explicit capacity matches
+            capacity_tier = 2.0
+
+        total_cost = model.cost_per_1k_input + model.cost_per_1k_output
+        speed = model.estimated_tokens_per_second or 0.0
+        capable.append((model, capacity_tier, total_cost, speed))
 
     if not capable:
         return None, 0.0
 
-    # Sort: lowest cost first, then highest speed as tiebreaker
-    capable.sort(key=lambda x: (x[1], -x[2]))
-    best_model, best_cost, best_speed = capable[0]
+    capable.sort(key=lambda x: (x[1], x[2], -x[3]))
+    best_model = capable[0][0]
 
-    # Confidence reflects how well the model's capacity matches the prompt
     max_cx = best_model.max_complexity_score
     if max_cx is not None:
         capacity_ratio = (max_cx - complexity) / max(0.01, max_cx)

@@ -26,15 +26,15 @@ TASK_GENERAL = "general"
 TASK_UNKNOWN = "unknown"
 
 TASK_DIFFICULTY_PRIORS: dict[str, float] = {
-    TASK_CHITCHAT: 0.10,
-    TASK_EXTRACTION: 0.25,
-    TASK_SUMMARIZATION: 0.30,
-    TASK_GENERAL: 0.35,
-    TASK_CODE_EDIT: 0.55,
-    TASK_DEBUG: 0.70,
-    TASK_PLANNING: 0.75,
-    TASK_MULTI_STEP: 0.80,
-    TASK_UNKNOWN: 0.35,
+    TASK_CHITCHAT: 0.08,
+    TASK_EXTRACTION: 0.18,
+    TASK_SUMMARIZATION: 0.22,
+    TASK_GENERAL: 0.22,
+    TASK_CODE_EDIT: 0.48,
+    TASK_DEBUG: 0.62,
+    TASK_PLANNING: 0.68,
+    TASK_MULTI_STEP: 0.72,
+    TASK_UNKNOWN: 0.25,
 }
 
 # (task_type, pattern, score) — highest total score wins
@@ -85,8 +85,8 @@ _REASONING_TRIGGERS: list[tuple[re.Pattern[str], float]] = [
     (re.compile(r"\b(compare|contrast)\b", re.I), 0.12),
     (re.compile(r"\bhow\s+does\b", re.I), 0.12),
     (re.compile(r"\bwhat\s+if\b", re.I), 0.12),
-    (re.compile(r"\b(explain|reason)\b", re.I), 0.10),
-    (re.compile(r"\bwhy\b", re.I), 0.08),
+    (re.compile(r"\b(explain|reason)\b", re.I), 0.06),
+    (re.compile(r"\bwhy\b", re.I), 0.05),
 ]
 
 _COMPLEXITY_KEYWORDS: list[tuple[re.Pattern[str], float]] = [
@@ -213,7 +213,7 @@ def compute_reasoning_complexity(text: str) -> float:
         score += 0.12
 
     question_marks = text.count("?")
-    score += min(question_marks * 0.04, 0.16)
+    score += min(question_marks * 0.02, 0.06)
 
     return min(round(score, 2), 1.0)
 
@@ -308,7 +308,7 @@ def compute_task_difficulty(
         + conversation_bonus
     )
 
-    reasoning_component = reasoning_complexity * 0.25
+    reasoning_component = reasoning_complexity * 0.18
 
     domain_bonus = {
         "math": 0.12,
@@ -451,7 +451,7 @@ def build_complexity_explanation(
     task_type_prior = TASK_DIFFICULTY_PRIORS.get(
         features.task_type, TASK_DIFFICULTY_PRIORS[TASK_UNKNOWN],
     )
-    reasoning_component = round(features.reasoning_complexity * 0.25, 3)
+    reasoning_component = round(features.reasoning_complexity * 0.18, 3)
     structural_component = round(
         min(sub_task_count * 0.04, 0.12)
         + min(reference_count * 0.03, 0.09)
