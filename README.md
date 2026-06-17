@@ -21,8 +21,8 @@ A production-ready OpenAI-compatible proxy with intelligent prompt routing, real
         └──────────┘ └──────────┘ └──────────┘
 
 ┌────────────────────────────────────────────┐
-│            React SPA Dashboard              │
-│  Metrics │ Models │ Logs │ Classifier │ ... │
+│            React SPA Dashboard             │
+│  Metrics │ Models │ Logs │ Classifier │ ...│
 └────────────────────────────────────────────┘
 ```
 
@@ -99,6 +99,7 @@ python scripts/seed_models.py   # populate with default models if DB is empty
 ```
 
 **Data persistence**
+
 - Model configs, request logs, and classifier training data all live in `./data/postgres/` on the host.
 - This directory is gitignored — do not commit it.
 - To back up your data, copy the `./data/postgres/` directory.
@@ -140,31 +141,37 @@ docker compose restart app   # reload model.joblib in workers
 
 ### Chat (OpenAI-compatible proxy)
 
-| Method | Path | Description |
-|--------|------|-------------|
-| POST | `/v1/chat/completions` | Chat completion (streaming + non-streaming) |
+
+| Method | Path                   | Description                                 |
+| ------ | ---------------------- | ------------------------------------------- |
+| POST   | `/v1/chat/completions` | Chat completion (streaming + non-streaming) |
+
 
 ### Model Registry
 
-| Method | Path | Description |
-|--------|------|-------------|
-| GET | `/api/v1/models` | List all models |
-| POST | `/api/v1/models` | Register a model |
-| PUT | `/api/v1/models/{id}` | Update model |
-| DELETE | `/api/v1/models/{id}` | Delete model |
+
+| Method | Path                  | Description      |
+| ------ | --------------------- | ---------------- |
+| GET    | `/api/v1/models`      | List all models  |
+| POST   | `/api/v1/models`      | Register a model |
+| PUT    | `/api/v1/models/{id}` | Update model     |
+| DELETE | `/api/v1/models/{id}` | Delete model     |
+
 
 ### Monitoring
 
-| Method | Path | Description |
-|--------|------|-------------|
-| GET | `/api/v1/logs` | Paginated request logs |
-| GET | `/api/v1/metrics/summary` | Aggregated metrics per model |
-| GET | `/api/v1/metrics/time-series` | Time-series metrics data |
-| GET | `/api/v1/metrics/live` | SSE real-time metrics stream |
-| GET | `/api/v1/metrics/dashboard` | Dashboard aggregate data |
-| GET | `/api/v1/classifier` | Classifier status |
-| GET | `/api/v1/queue` | Queue depth and worker status |
-| GET | `/health` | Health check |
+
+| Method | Path                          | Description                   |
+| ------ | ----------------------------- | ----------------------------- |
+| GET    | `/api/v1/logs`                | Paginated request logs        |
+| GET    | `/api/v1/metrics/summary`     | Aggregated metrics per model  |
+| GET    | `/api/v1/metrics/time-series` | Time-series metrics data      |
+| GET    | `/api/v1/metrics/live`        | SSE real-time metrics stream  |
+| GET    | `/api/v1/metrics/dashboard`   | Dashboard aggregate data      |
+| GET    | `/api/v1/classifier`          | Classifier status             |
+| GET    | `/api/v1/queue`               | Queue depth and worker status |
+| GET    | `/health`                     | Health check                  |
+
 
 ## Routing Logic
 
@@ -173,11 +180,8 @@ Every `POST /v1/chat/completions` request goes through feature extraction and ru
 ### What routes requests (live path)
 
 1. **Feature extraction** — Token count, code/URL/image/tool signals, language, reasoning complexity, etc. (`router_service.extract_features`).
-
 2. **Complexity routing** — If models have `max_complexity_score`, pick the cheapest capable model for the prompt's complexity.
-
 3. **Rule-based routing** — Score models by capabilities (vision +3, tools +2, long context +2, code +1.5, reasoning +2, priority bias).
-
 4. **Route** — The highest-scoring model is used immediately. If confidence ≥ `CLASSIFIER_MIN_CONFIDENCE` (default 0.6), done.
 
 ### What the ML classifier does today
@@ -188,18 +192,21 @@ To train: `python -m ml.train` (see [ML classifier guide](docs/ml-classifier-tra
 
 ## Configuration
 
-| Environment Variable | Default | Description |
-|---------------------|---------|-------------|
-| `APP_PORT` | `8080` | Port for the backend FastAPI server |
-| `UI_PORT` | `3000` | Port for the frontend Nginx/UI server |
-| `DATABASE_URL` | `postgresql+asyncpg://router:router@db:5432/router` | Async DB URL |
-| `REDIS_URL` | `redis://redis:6379/0` | Redis URL |
-| `ENCRYPTION_KEY` | (required) | Fernet key for API key encryption |
-| `LOG_LEVEL` | `INFO` | Logging level |
-| `CLASSIFIER_MIN_CONFIDENCE` | `0.6` | Minimum confidence for routing |
-| `EMBEDDING_ROUTING_ENABLED` | `false` | Blend embedding k-NN difficulty into task routing |
-| `EMBEDDING_BLEND_WEIGHT` | `0.55` | Weight on embedding vs heuristic difficulty (0–1) |
-| `EMBEDDING_MODEL_NAME` | `sentence-transformers/all-MiniLM-L6-v2` | Local embedding model |
-| `WORKER_CONCURRENCY` | `4` | ML worker count |
-| `UPSTREAM_TIMEOUT` | `120.0` | Upstream API timeout (seconds) |
-| `DEFAULT_MODEL` | `gpt-4o-mini` | Fallback model |
+
+| Environment Variable        | Default                                             | Description                                       |
+| --------------------------- | --------------------------------------------------- | ------------------------------------------------- |
+| `APP_PORT`                  | `8080`                                              | Port for the backend FastAPI server               |
+| `UI_PORT`                   | `3000`                                              | Port for the frontend Nginx/UI server             |
+| `DATABASE_URL`              | `postgresql+asyncpg://router:router@db:5432/router` | Async DB URL                                      |
+| `REDIS_URL`                 | `redis://redis:6379/0`                              | Redis URL                                         |
+| `ENCRYPTION_KEY`            | (required)                                          | Fernet key for API key encryption                 |
+| `LOG_LEVEL`                 | `INFO`                                              | Logging level                                     |
+| `CLASSIFIER_MIN_CONFIDENCE` | `0.6`                                               | Minimum confidence for routing                    |
+| `EMBEDDING_ROUTING_ENABLED` | `false`                                             | Blend embedding k-NN difficulty into task routing |
+| `EMBEDDING_BLEND_WEIGHT`    | `0.55`                                              | Weight on embedding vs heuristic difficulty (0–1) |
+| `EMBEDDING_MODEL_NAME`      | `sentence-transformers/all-MiniLM-L6-v2`            | Local embedding model                             |
+| `WORKER_CONCURRENCY`        | `4`                                                 | ML worker count                                   |
+| `UPSTREAM_TIMEOUT`          | `120.0`                                             | Upstream API timeout (seconds)                    |
+| `DEFAULT_MODEL`             | `gpt-4o-mini`                                       | Fallback model                                    |
+
+
