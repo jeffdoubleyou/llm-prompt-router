@@ -61,42 +61,150 @@ def _has_urls_in_messages(messages: list[dict]) -> bool:
     return bool(URL_PATTERN.search(_messages_to_text(messages, _URL_SCAN_ROLES)))
 
 
+def _summarize_image_ref(ref: str, max_len: int = 100) -> str:
+    if ref.startswith("data:image/"):
+        return f"data:image/…;base64, [{len(ref)} chars]"
+    if len(ref) > max_len:
+        return f"{ref[:max_len]}…"
+    return ref
+
+
+def analyze_images(messages: list[dict]) -> dict:
+    """Return detailed image detection results for debugging and routing.
+
+    See docs/image-detection.md for the full ruleset.
+    """
+    detections: list[dict] = []
+
+    for msg_index, message in enumerate(messages):
+        role = message.get("role", "unknown")
+        content = message.get("content")
+        if not content:
+            continue
+
+        if isinstance(content, list):
+            for part_index, part in enumerate(content):
+                if not isinstance(part, dict):
+                    continue
+                part_type = part.get("type", "")
+
+                if part_type == "image_url":
+                    image_url = part.get("image_url", {})
+                    url = ""
+                    if isinstance(image_url, dict):
+                        url = image_url.get("url", "") or ""
+                    detections.append({
+                        "message_index": msg_index,
+                        "role": role,
+                        "part_index": part_index,
+                        "match_type": "openai_image_url",
+                        "summary": f"content[{part_index}] type=image_url",
+                        "detail": _summarize_image_ref(url) if url else None,
+                    })
+                    continue
+
+                if part_type == "image" and "image_url" in part:
+                    image_url = part.get("image_url", {})
+                    url = image_url.get("url", "") if isinstance(image_url, dict) else ""
+                    detections.append({
+                        "message_index": msg_index,
+                        "role": role,
+                        "part_index": part_index,
+                        "match_type": "openai_image_part",
+                        "summary": f"content[{part_index}] type=image (image_url)",
+                        "detail": _summarize_image_ref(url) if url else None,
+                    })
+                    continue
+
+                if part_type == "image" and "source" in part:
+                    source = part.get("source", {})
+                    source_type = source.get("type", "unknown") if isinstance(source, dict) else "unknown"
+                    detail = None
+                    if isinstance(source, dict):
+                        if source_type == "url":
+                            detail = _summarize_image_ref(source.get("url", "") or "")
+                        elif source_type == "base64":
+                            media = source.get("media_type", "image/*")
+                            data_len = len(source.get("data", "") or "")
+                            detail = f"base64 {media} [{data_len} chars]"
+                    detections.append({
+                        "message_index": msg_index,
+                        "role": role,
+                        "part_index": part_index,
+                        "match_type": "anthropic_image",
+                        "summary": f"content[{part_index}] type=image (source={source_type})",
+                        "detail": detail,
+                    })
+                    continue
+
+                image_url = part.get("image_url", {})
+                if isinstance(image_url, dict):
+                    url = image_url.get("url", "")
+                    if isinstance(url, str) and _is_image_data_uri(url):
+                        detections.append({
+                            "message_index": msg_index,
+                            "role": role,
+                            "part_index": part_index,
+                            "match_type": "nested_data_uri",
+                            "summary": f"content[{part_index}] image_url.url is embedded data URI",
+                            "detail": _summarize_image_ref(url),
+                        })
+
+        if isinstance(content, str):
+            if IMAGE_DATA_URI_PATTERN.search(content):
+                detections.append({
+                    "message_index": msg_index,
+                    "role": role,
+                    "part_index": None,
+                    "match_type": "string_data_uri",
+                    "summary": "string content contains data:image/…;base64,",
+                    "detail": _summarize_image_ref(content),
+                })
+                continue
+
+            md_match = MARKDOWN_IMAGE_PATTERN.search(content)
+            if md_match:
+                detections.append({
+                    "message_index": msg_index,
+                    "role": role,
+                    "part_index": None,
+                    "match_type": "markdown_image",
+                    "summary": "string content contains Markdown image syntax",
+                    "detail": md_match.group(0)[:120],
+                })
+                continue
+
+            html_match = HTML_IMG_PATTERN.search(content)
+            if html_match:
+                detections.append({
+                    "message_index": msg_index,
+                    "role": role,
+                    "part_index": None,
+                    "match_type": "html_img",
+                    "summary": "string content contains <img src=…>",
+                    "detail": html_match.group(0)[:120],
+                })
+
+    return {
+        "has_images": bool(detections),
+        "detection_count": len(detections),
+        "detections": detections,
+        "ignored": [
+            "Plain-text mentions of image filenames (e.g. chart.png)",
+            "Plain-text https:// URLs to images without multimodal parts",
+            "Loose ;base64, markers without a data:image/ prefix",
+            "URLs in system-role messages are ignored for has_urls only (not image detection)",
+        ],
+    }
+
+
 def _detect_images(messages: list[dict]) -> bool:
     """Detect whether any message contains actual image payload.
 
     Only matches structured multimodal parts and embedded image data — not
     casual mentions of filenames or image URLs in plain text.
     """
-    for m in messages:
-        content = m.get("content")
-        if not content:
-            continue
-
-        if isinstance(content, list):
-            for part in content:
-                if not isinstance(part, dict):
-                    continue
-                part_type = part.get("type", "")
-
-                if part_type == "image_url":
-                    return True
-
-                if part_type == "image" and ("image_url" in part or "source" in part):
-                    return True
-
-                image_url = part.get("image_url", {})
-                if isinstance(image_url, dict):
-                    url = image_url.get("url", "")
-                    if isinstance(url, str) and _is_image_data_uri(url):
-                        return True
-
-        if isinstance(content, str):
-            if IMAGE_DATA_URI_PATTERN.search(content):
-                return True
-            if MARKDOWN_IMAGE_PATTERN.search(content) or HTML_IMG_PATTERN.search(content):
-                return True
-
-    return False
+    return analyze_images(messages)["has_images"]
 
 
 def _is_image_data_uri(text: str) -> bool:
@@ -459,6 +567,7 @@ async def store_prompt_debug(
             "model_id": model_id,
             "messages": _sanitize_for_debug_storage(messages),
             "features": features.model_dump(),
+            "image_detection": analyze_images(messages),
             "created_at": datetime.utcnow().isoformat(),
         }
         await queue.store_prompt_debug(entry)

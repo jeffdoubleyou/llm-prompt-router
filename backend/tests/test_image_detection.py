@@ -9,7 +9,50 @@ from app.services.router_service import (
     _detect_images,
     _has_urls_in_messages,
     _is_image_data_uri,
+    analyze_images,
 )
+
+
+class TestAnalyzeImages:
+    def test_no_images_returns_empty_detections(self):
+        result = analyze_images([{"role": "user", "content": "hello"}])
+        assert result["has_images"] is False
+        assert result["detection_count"] == 0
+        assert result["detections"] == []
+
+    def test_openai_image_url_lists_detection(self):
+        messages = [{
+            "role": "user",
+            "content": [
+                {"type": "text", "text": "What is this?"},
+                {"type": "image_url", "image_url": {"url": "https://example.com/a.png"}},
+            ],
+        }]
+        result = analyze_images(messages)
+        assert result["has_images"] is True
+        assert result["detection_count"] == 1
+        assert result["detections"][0]["match_type"] == "openai_image_url"
+        assert result["detections"][0]["message_index"] == 0
+        assert result["detections"][0]["part_index"] == 1
+        assert "example.com" in result["detections"][0]["detail"]
+
+    def test_multiple_detections(self):
+        messages = [{
+            "role": "user",
+            "content": [
+                {"type": "image_url", "image_url": {"url": "https://example.com/1.png"}},
+                {"type": "image_url", "image_url": {"url": "https://example.com/2.png"}},
+            ],
+        }]
+        result = analyze_images(messages)
+        assert result["detection_count"] == 2
+
+    def test_plain_url_not_listed(self):
+        result = analyze_images([{
+            "role": "user",
+            "content": "https://example.com/photo.jpg",
+        }])
+        assert result["has_images"] is False
 
 
 class TestDetectImages:

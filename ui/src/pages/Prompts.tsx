@@ -1,7 +1,107 @@
 import { useState } from "react";
 import { useQuery } from "@tanstack/react-query";
-import { ChevronDown, ChevronUp, Bug } from "lucide-react";
-import { fetchDebugPrompts, PromptDebugEntry } from "../lib/api";
+import { ChevronDown, ChevronUp, Bug, ImageIcon } from "lucide-react";
+import { fetchDebugPrompts, ImageDetectionResult, PromptDebugEntry } from "../lib/api";
+
+const MATCH_TYPE_LABELS: Record<string, string> = {
+  openai_image_url: "OpenAI image_url part",
+  openai_image_part: "OpenAI image part",
+  anthropic_image: "Anthropic image block",
+  nested_data_uri: "Embedded data URI in image_url",
+  string_data_uri: "data:image/ in string",
+  markdown_image: "Markdown ![…](…)",
+  html_img: "HTML <img> tag",
+};
+
+function ImageDetectionPanel({
+  detection,
+}: {
+  detection: ImageDetectionResult | undefined;
+}) {
+  if (!detection) {
+    return (
+      <div className="text-xs text-gray-500 border border-gray-800 rounded-md p-3 bg-gray-950/50">
+        No image detection data for this entry (stored before debug output was added).
+        Send a new request to populate it.
+      </div>
+    );
+  }
+
+  return (
+    <div className="space-y-3">
+      <div className="flex flex-wrap items-center gap-2">
+        <span
+          className={`text-xs px-2 py-0.5 rounded-full ${
+            detection.has_images
+              ? "bg-emerald-500/20 text-emerald-300"
+              : "bg-gray-800 text-gray-500"
+          }`}
+        >
+          has_images: {detection.has_images ? "yes" : "no"}
+        </span>
+        <span className="text-xs text-gray-500">
+          {detection.detection_count} match{detection.detection_count === 1 ? "" : "es"}
+        </span>
+        <span className="text-xs text-gray-500">
+          See <code className="text-gray-400">docs/image-detection.md</code> for rules
+        </span>
+      </div>
+
+      {detection.detections.length > 0 ? (
+        <div className="overflow-x-auto border border-gray-800 rounded-md">
+          <table className="w-full text-xs">
+            <thead>
+              <tr className="border-b border-gray-800 text-gray-500 text-left">
+                <th className="py-2 px-3">Msg</th>
+                <th className="py-2 px-3">Role</th>
+                <th className="py-2 px-3">Part</th>
+                <th className="py-2 px-3">Type</th>
+                <th className="py-2 px-3">Summary</th>
+                <th className="py-2 px-3">Detail</th>
+              </tr>
+            </thead>
+            <tbody>
+              {detection.detections.map((match, i) => (
+                <tr key={i} className="border-b border-gray-800/50">
+                  <td className="py-2 px-3 font-mono">{match.message_index}</td>
+                  <td className="py-2 px-3">{match.role}</td>
+                  <td className="py-2 px-3 font-mono">
+                    {match.part_index ?? "—"}
+                  </td>
+                  <td className="py-2 px-3 text-amber-300/90">
+                    {MATCH_TYPE_LABELS[match.match_type] ?? match.match_type}
+                  </td>
+                  <td className="py-2 px-3 text-gray-300">{match.summary}</td>
+                  <td className="py-2 px-3 font-mono text-gray-400 max-w-xs truncate">
+                    {match.detail ?? "—"}
+                  </td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+      ) : (
+        <p className="text-xs text-gray-500">
+          No image payloads matched. Plain-text filenames and https image links are
+          intentionally ignored.
+        </p>
+      )}
+
+      {detection.ignored && detection.ignored.length > 0 && (
+        <div>
+          <h5 className="text-[10px] uppercase tracking-wide text-gray-600 mb-1">
+            Intentionally not flagged
+          </h5>
+          <ul className="text-xs text-gray-500 list-disc list-inside space-y-0.5">
+            {detection.ignored.map((note) => (
+              <li key={note}>{note}</li>
+            ))}
+          </ul>
+        </div>
+      )}
+    </div>
+  );
+}
 
 function FeatureBadges({ features }: { features: Record<string, unknown> }) {
   const flags = [
@@ -78,12 +178,26 @@ function PromptRow({
         </td>
         <td className="py-3 px-4">
           <FeatureBadges features={entry.features} />
+          {entry.image_detection?.has_images && (
+            <div className="mt-1.5 flex items-center gap-1 text-xs text-emerald-400/90">
+              <ImageIcon size={12} />
+              {entry.image_detection.detection_count} image
+              {entry.image_detection.detection_count === 1 ? "" : "s"} detected
+            </div>
+          )}
         </td>
       </tr>
       {expanded && (
         <tr className="border-b border-gray-800 bg-gray-900/60">
           <td colSpan={5} className="p-4">
             <div className="space-y-3">
+              <div>
+                <h4 className="text-xs uppercase tracking-wide text-gray-500 mb-2 flex items-center gap-2">
+                  <ImageIcon size={14} />
+                  Image Detection
+                </h4>
+                <ImageDetectionPanel detection={entry.image_detection} />
+              </div>
               <div>
                 <h4 className="text-xs uppercase tracking-wide text-gray-500 mb-2">
                   Messages
@@ -125,7 +239,8 @@ export default function Prompts() {
         <div>
           <h2 className="text-2xl font-bold">Prompt Debug</h2>
           <p className="text-sm text-gray-500">
-            Recent incoming prompts stored in Redis for inspection
+            Recent incoming prompts stored in Redis for inspection. Expand a row to
+            see image detection details and message payloads.
           </p>
         </div>
       </div>

@@ -117,11 +117,28 @@ export interface QueueStatus {
   failed_total: number;
 }
 
+export interface ImageDetectionMatch {
+  message_index: number;
+  role: string;
+  part_index: number | null;
+  match_type: string;
+  summary: string;
+  detail: string | null;
+}
+
+export interface ImageDetectionResult {
+  has_images: boolean;
+  detection_count: number;
+  detections: ImageDetectionMatch[];
+  ignored?: string[];
+}
+
 export interface PromptDebugEntry {
   request_id: string;
   model_id: string | null;
   messages: Record<string, unknown>[];
   features: Record<string, unknown>;
+  image_detection?: ImageDetectionResult;
   created_at: string;
 }
 
