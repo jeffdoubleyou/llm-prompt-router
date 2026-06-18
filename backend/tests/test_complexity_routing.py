@@ -272,18 +272,18 @@ class TestMatchModelByComplexity:
         assert model.id == "has-vision"
         assert method == "rules"
 
-    def test_non_image_prompt_excludes_vision_models_when_alternatives_exist(self):
-        """Vision models should only be used when the prompt contains images."""
+    def test_non_image_prompt_includes_vision_models(self):
+        """Vision-capable models compete for text-only prompts; fastest eligible model wins."""
         models = [
             _make_model(
-                model_id="vision-slow",
+                model_id="vision-fast",
                 capabilities=["text", "vision", "tool_calling"],
-                max_complexity_score=0.6,
-                estimated_tokens_per_second=10.0,
-                priority=2,
+                max_complexity_score=0.95,
+                estimated_tokens_per_second=60.0,
+                priority=3,
             ),
             _make_model(
-                model_id="text-fast",
+                model_id="text-slow",
                 capabilities=["text", "tool_calling"],
                 max_complexity_score=0.95,
                 estimated_tokens_per_second=35.0,
@@ -295,9 +295,12 @@ class TestMatchModelByComplexity:
             has_tool_calls=True,
             task_difficulty=0.48,
         )
+        eligible = _filter_eligible_models(features, models)
+        assert {m.id for m in eligible} == {"vision-fast", "text-slow"}
+
         model, _, method = select_routing_model(features, models)
         assert model is not None
-        assert model.id == "text-fast"
+        assert model.id == "vision-fast"
         assert method == "rules"
 
     def test_complexity_routing_disabled_uses_capability_rules_only(self, monkeypatch):

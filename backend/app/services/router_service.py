@@ -283,15 +283,6 @@ def _filter_eligible_models(
 
         eligible.append(model)
 
-    # Vision-capable models are for image prompts; skip them when non-vision options exist.
-    if not features.has_images:
-        non_vision = [
-            m for m in eligible
-            if ModelCapability.vision.value not in _model_caps(m)
-        ]
-        if non_vision:
-            eligible = non_vision
-
     return eligible
 
 
@@ -627,8 +618,6 @@ def _evaluate_models_for_routing(
             reasons.append(
                 f"token_count {features.token_count} > context_window {model.context_window}"
             )
-        if model.id not in eligible_ids and not reasons:
-            reasons.append("vision model excluded (no images in prompt)")
 
         max_cx = model.max_complexity_score
         rule_score = _compute_rule_score(

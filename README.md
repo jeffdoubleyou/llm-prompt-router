@@ -180,7 +180,7 @@ Every `POST /v1/chat/completions` request goes through feature extraction and ru
 ### What routes requests (live path)
 
 1. **Feature extraction** — Token count, code/URL/image/tool signals, language, task type, etc. (`router_service.extract_features`).
-2. **Capability filter** — Hard requirements first: vision for images, tool calling for tools, code for code blocks, context window limits. Vision-capable models are skipped when the prompt has no images and a non-vision model can handle it.
+2. **Capability filter** — Hard requirements first: vision required when images are present (non-vision models excluded), tool calling for tools, context window limits.
 3. **Rule-based scoring** — Score remaining models by capability match (vision +3, tools +2, long context +2, code +1.5, reasoning +2, priority bias). Keep the highest-scoring tier.
 4. **Speed/cost ranking** — Among that tier, pick the **fastest** model (`estimated_tokens_per_second`), then the **cheapest** (input + output cost per 1k tokens).
 5. **Complexity routing (optional)** — When `COMPLEXITY_ROUTING_ENABLED=true`, also require `max_complexity_score` to cover the prompt's routing difficulty before speed/cost ranking. **Default is off** — no parameter/complexity-tier selection unless you enable it.
