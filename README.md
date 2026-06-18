@@ -1,6 +1,8 @@
 # LLM Prompt Router
 
-A production-ready OpenAI-compatible proxy with intelligent prompt routing, real-time metrics, and ML-based classifier fallback.
+🚧 Work In Progress
+
+An OpenAI-compatible proxy with intelligent prompt routing, real-time metrics, and ML-based classifier fallback.
 
 ## Architecture
 
