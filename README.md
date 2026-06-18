@@ -227,6 +227,9 @@ To train: `python -m ml.train` (see [ML classifier guide](docs/ml-classifier-tra
 ### Prompt Debug
 <img width="962" height="773" alt="image" src="https://github.com/user-attachments/assets/668557ce-e709-4911-a09e-c1d58b5aba82" />
 
+### Prompt Debug -- Detail / Parsed
+<img width="947" height="994" alt="image" src="https://github.com/user-attachments/assets/d32f8c34-eb64-4c34-a864-c0e09e38de2f" />
+
 ### Complexity Debug
 <img width="953" height="1002" alt="image" src="https://github.com/user-attachments/assets/80103ef6-4560-4ea2-a98b-8ce0153073a1" />
 
