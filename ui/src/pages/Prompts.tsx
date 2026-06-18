@@ -1,7 +1,185 @@
-import { useState } from "react";
+import { useMemo, useState } from "react";
 import { useQuery } from "@tanstack/react-query";
-import { ChevronDown, ChevronUp, Bug, ImageIcon } from "lucide-react";
+import { ChevronDown, ChevronUp, Bug, ImageIcon, Search } from "lucide-react";
 import { fetchDebugPrompts, ImageDetectionResult, PromptDebugEntry } from "../lib/api";
+
+function promptMatchesSearch(entry: PromptDebugEntry, query: string): boolean {
+  const haystack = [
+    entry.request_id,
+    entry.model_id ?? "",
+    JSON.stringify(entry.messages),
+    JSON.stringify(entry.features),
+  ]
+    .join("\n")
+    .toLowerCase();
+  return haystack.includes(query);
+}
+
+function ContentPart({ part }: { part: unknown }) {
+  if (typeof part === "string") {
+    return <div className="whitespace-pre-wrap break-words text-gray-200">{part}</div>;
+  }
+  if (part && typeof part === "object") {
+    const p = part as Record<string, unknown>;
+    if (p.type === "text" && typeof p.text === "string") {
+      return <div className="whitespace-pre-wrap break-words text-gray-200">{p.text}</div>;
+    }
+    if (p.type === "image_url" || p.type === "image") {
+      return (
+        <div className="text-gray-400 italic text-xs whitespace-pre-wrap break-words">
+          [{String(p.type)}: {JSON.stringify(p.image_url ?? p.source ?? p)}]
+        </div>
+      );
+    }
+    return (
+      <pre className="text-xs whitespace-pre-wrap break-words text-gray-300">
+        {JSON.stringify(part, null, 2)}
+      </pre>
+    );
+  }
+  return null;
+}
+
+function MessageContent({ content }: { content: unknown }) {
+  if (content == null) {
+    return <span className="text-gray-500 italic">null</span>;
+  }
+  if (typeof content === "string") {
+    return <div className="whitespace-pre-wrap break-words text-gray-200">{content}</div>;
+  }
+  if (Array.isArray(content)) {
+    return (
+      <div className="space-y-2">
+        {content.map((part, i) => (
+          <div key={i} className="pl-2 border-l border-gray-700">
+            <ContentPart part={part} />
+          </div>
+        ))}
+      </div>
+    );
+  }
+  return (
+    <pre className="text-xs whitespace-pre-wrap break-words text-gray-300">
+      {JSON.stringify(content, null, 2)}
+    </pre>
+  );
+}
+
+function ToolCallsView({ toolCalls }: { toolCalls: unknown[] }) {
+  return (
+    <div className="space-y-2">
+      {toolCalls.map((tc, i) => {
+        const t = tc as Record<string, unknown>;
+        const fn = t.function as Record<string, unknown> | undefined;
+        return (
+          <div key={i} className="border border-gray-700 rounded p-2 bg-gray-950/50">
+            <div className="text-xs text-gray-500">ID: {String(t.id ?? "—")}</div>
+            <div className="text-xs text-amber-300/90">Type: {String(t.type ?? "function")}</div>
+            {fn && (
+              <>
+                <div className="font-mono text-sm text-brand-300">{String(fn.name ?? "—")}</div>
+                <pre className="text-xs whitespace-pre-wrap break-words mt-1 text-gray-300">
+                  {typeof fn.arguments === "string"
+                    ? fn.arguments
+                    : JSON.stringify(fn.arguments, null, 2)}
+                </pre>
+              </>
+            )}
+          </div>
+        );
+      })}
+    </div>
+  );
+}
+
+function MessagesParsedView({ messages }: { messages: Record<string, unknown>[] }) {
+  if (messages.length === 0) {
+    return <p className="text-xs text-gray-500">No messages in this entry.</p>;
+  }
+
+  return (
+    <div className="space-y-3 max-h-96 overflow-y-auto">
+      {messages.map((msg, i) => (
+        <div key={i} className="border border-gray-800 rounded-md p-3 bg-gray-950/50">
+          <div className="flex flex-wrap items-center gap-2 mb-2">
+            <span className="text-xs uppercase tracking-wide px-2 py-0.5 rounded bg-brand-500/20 text-brand-300">
+              {String(msg.role ?? "unknown")}
+            </span>
+            {msg.name != null && (
+              <span className="text-xs text-gray-500">name: {String(msg.name)}</span>
+            )}
+            {msg.tool_call_id != null && (
+              <span className="text-xs font-mono text-gray-500">
+                tool_call_id: {String(msg.tool_call_id)}
+              </span>
+            )}
+          </div>
+          {"content" in msg && (
+            <div className="mb-2">
+              <h5 className="text-[10px] uppercase text-gray-600 mb-1">Content</h5>
+              <MessageContent content={msg.content} />
+            </div>
+          )}
+          {Array.isArray(msg.tool_calls) && msg.tool_calls.length > 0 && (
+            <div>
+              <h5 className="text-[10px] uppercase text-gray-600 mb-1">Tool Calls</h5>
+              <ToolCallsView toolCalls={msg.tool_calls} />
+            </div>
+          )}
+        </div>
+      ))}
+    </div>
+  );
+}
+
+function MessagesPanel({ messages }: { messages: Record<string, unknown>[] }) {
+  const [viewMode, setViewMode] = useState<"parsed" | "raw">("parsed");
+
+  return (
+    <div>
+      <div className="flex items-center justify-between mb-2">
+        <h4 className="text-xs uppercase tracking-wide text-gray-500">Messages</h4>
+        <div className="flex rounded-md border border-gray-700 overflow-hidden text-xs">
+          <button
+            type="button"
+            className={`px-2.5 py-1 ${
+              viewMode === "parsed"
+                ? "bg-gray-700 text-gray-100"
+                : "text-gray-500 hover:text-gray-300"
+            }`}
+            onClick={(e) => {
+              e.stopPropagation();
+              setViewMode("parsed");
+            }}
+          >
+            Parsed
+          </button>
+          <button
+            type="button"
+            className={`px-2.5 py-1 border-l border-gray-700 ${
+              viewMode === "raw"
+                ? "bg-gray-700 text-gray-100"
+                : "text-gray-500 hover:text-gray-300"
+            }`}
+            onClick={(e) => {
+              e.stopPropagation();
+              setViewMode("raw");
+            }}
+          >
+            Raw JSON
+          </button>
+        </div>
+      </div>
+      {viewMode === "parsed" ? (
+        <MessagesParsedView messages={messages} />
+      ) : (
+        <pre className="text-xs bg-gray-950 border border-gray-800 rounded-md p-3 whitespace-pre-wrap break-words max-h-96 overflow-y-auto">
+          {JSON.stringify(messages, null, 2)}
+        </pre>
+      )}
+    </div>
+  );
+}
 
 const MATCH_TYPE_LABELS: Record<string, string> = {
   openai_image_url: "OpenAI image_url part",
@@ -199,18 +377,13 @@ function PromptRow({
                 <ImageDetectionPanel detection={entry.image_detection} />
               </div>
               <div>
-                <h4 className="text-xs uppercase tracking-wide text-gray-500 mb-2">
-                  Messages
-                </h4>
-                <pre className="text-xs bg-gray-950 border border-gray-800 rounded-md p-3 overflow-x-auto max-h-96 overflow-y-auto">
-                  {JSON.stringify(entry.messages, null, 2)}
-                </pre>
+                <MessagesPanel messages={entry.messages} />
               </div>
               <div>
                 <h4 className="text-xs uppercase tracking-wide text-gray-500 mb-2">
                   Extracted Features
                 </h4>
-                <pre className="text-xs bg-gray-950 border border-gray-800 rounded-md p-3 overflow-x-auto">
+                <pre className="text-xs bg-gray-950 border border-gray-800 rounded-md p-3 whitespace-pre-wrap break-words">
                   {JSON.stringify(entry.features, null, 2)}
                 </pre>
               </div>
@@ -225,12 +398,20 @@ function PromptRow({
 export default function Prompts() {
   const [limit, setLimit] = useState(25);
   const [expandedId, setExpandedId] = useState<string | null>(null);
+  const [searchQuery, setSearchQuery] = useState("");
 
   const { data, isLoading, error } = useQuery({
     queryKey: ["debug-prompts", limit],
     queryFn: () => fetchDebugPrompts(limit),
     refetchInterval: 10_000,
   });
+
+  const filteredPrompts = useMemo(() => {
+    const prompts = data?.prompts ?? [];
+    const query = searchQuery.trim().toLowerCase();
+    if (!query) return prompts;
+    return prompts.filter((entry) => promptMatchesSearch(entry, query));
+  }, [data?.prompts, searchQuery]);
 
   return (
     <div className="space-y-6">
@@ -245,7 +426,19 @@ export default function Prompts() {
         </div>
       </div>
 
-      <div className="flex items-center gap-4">
+      <div className="flex flex-wrap items-center gap-4">
+        <div className="relative flex-1 max-w-sm">
+          <Search
+            size={16}
+            className="absolute left-3 top-1/2 -translate-y-1/2 text-gray-500"
+          />
+          <input
+            className="input pl-9"
+            placeholder="Search prompts…"
+            value={searchQuery}
+            onChange={(e) => setSearchQuery(e.target.value)}
+          />
+        </div>
         <label className="text-sm text-gray-400">
           Show last
           <select
@@ -263,7 +456,9 @@ export default function Prompts() {
         </label>
         {data && (
           <span className="text-sm text-gray-500">
-            {data.count} stored (max {data.max_stored})
+            {searchQuery.trim()
+              ? `${filteredPrompts.length} of ${data.count} shown`
+              : `${data.count} stored (max ${data.max_stored})`}
           </span>
         )}
       </div>
@@ -294,14 +489,16 @@ export default function Prompts() {
                   </td>
                 </tr>
               )}
-              {!isLoading && (data?.prompts.length ?? 0) === 0 && (
+              {!isLoading && filteredPrompts.length === 0 && (
                 <tr>
                   <td colSpan={5} className="py-8 text-center text-gray-500">
-                    No prompts stored yet. Send a chat completion request to populate this view.
+                    {searchQuery.trim()
+                      ? "No prompts match your search."
+                      : "No prompts stored yet. Send a chat completion request to populate this view."}
                   </td>
                 </tr>
               )}
-              {data?.prompts.map((entry) => (
+              {filteredPrompts.map((entry) => (
                 <PromptRow
                   key={entry.request_id}
                   entry={entry}

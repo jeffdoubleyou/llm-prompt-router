@@ -45,6 +45,45 @@ def _text_from_content(content: object) -> str:
     return ""
 
 
+def estimate_token_count(text: str) -> int:
+    """Estimate token count for a string using tiktoken when available."""
+    if not text:
+        return 0
+    try:
+        import tiktoken
+
+        enc = tiktoken.get_encoding("cl100k_base")
+        return len(enc.encode(text))
+    except Exception:
+        return len(text) // 4
+
+
+def parse_usage_from_response(data: dict) -> tuple[int, int]:
+    """Extract prompt and completion token counts from an upstream response or chunk."""
+    usage = data.get("usage")
+    if not isinstance(usage, dict):
+        return 0, 0
+
+    prompt_tokens = usage.get("prompt_tokens")
+    if prompt_tokens is None:
+        prompt_tokens = usage.get("input_tokens")
+    completion_tokens = usage.get("completion_tokens")
+    if completion_tokens is None:
+        completion_tokens = usage.get("output_tokens")
+
+    prompt = int(prompt_tokens or 0)
+    completion = int(completion_tokens or 0)
+
+    if prompt == 0 and completion == 0:
+        total = usage.get("total_tokens")
+        if total is not None:
+            total_int = int(total)
+            if total_int > 0:
+                return total_int, 0
+
+    return prompt, completion
+
+
 def _messages_to_text(messages: list[dict], roles: frozenset[str] | None = None) -> str:
     texts: list[str] = []
     for m in messages:
@@ -260,12 +299,7 @@ def extract_features(messages: list[dict]) -> PromptFeatures:
         m.get("tool_call_id") for m in messages
     )
 
-    try:
-        import tiktoken
-        enc = tiktoken.get_encoding("cl100k_base")
-        token_count = len(enc.encode(full_text)) if full_text else 0
-    except Exception:
-        token_count = len(full_text) // 4
+    token_count = estimate_token_count(full_text)
 
     dominant_lang = _detect_dominant_language(text_lower)
 

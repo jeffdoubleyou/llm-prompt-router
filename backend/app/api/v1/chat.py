@@ -20,7 +20,15 @@ from app.core.models import (
     Usage,
 )
 from app.models.db import Model
-from app.services.router_service import classify_and_route, extract_features, get_model_by_id, log_request, store_prompt_debug
+from app.services.router_service import (
+    classify_and_route,
+    estimate_token_count,
+    extract_features,
+    get_model_by_id,
+    log_request,
+    parse_usage_from_response,
+    store_prompt_debug,
+)
 from app.services.upstream_queue import upstream_queue_manager
 
 logger = logging.getLogger(__name__)
@@ -94,6 +102,8 @@ async def chat_completions(
         payload["tools"] = chat_req.tools
     if chat_req.tool_choice:
         payload["tool_choice"] = chat_req.tool_choice
+    if chat_req.stream:
+        payload["stream_options"] = {"include_usage": True}
 
     headers = {
         "Content-Type": "application/json",
@@ -103,10 +113,12 @@ async def chat_completions(
     if chat_req.stream:
         return await _handle_stream(
             request_id, model_id, model_obj, base_url, upstream_url, payload, headers, db,
+            estimated_prompt_tokens=features.token_count,
         )
 
     return await _handle_non_stream(
         request_id, model_id, model_obj, base_url, upstream_url, payload, headers, db,
+        estimated_prompt_tokens=features.token_count,
     )
 
 
@@ -126,10 +138,12 @@ async def _handle_non_stream(
     payload: dict,
     headers: dict,
     db,
+    estimated_prompt_tokens: int = 0,
 ):
     async def _execute():
         return await _handle_non_stream_inner(
             request_id, model_id, model_obj, upstream_url, payload, headers, db,
+            estimated_prompt_tokens=estimated_prompt_tokens,
         )
 
     return await _with_upstream_queue(base_url, request_id, model_id, _execute)
@@ -143,6 +157,7 @@ async def _handle_non_stream_inner(
     payload: dict,
     headers: dict,
     db,
+    estimated_prompt_tokens: int = 0,
 ):
     start_time = time.monotonic()
     timeout = _get_timeout(model_obj)
@@ -166,8 +181,24 @@ async def _handle_non_stream_inner(
 
             upstream_data = resp.json()
 
-            prompt_tokens = upstream_data.get("usage", {}).get("prompt_tokens", 0)
-            completion_tokens = upstream_data.get("usage", {}).get("completion_tokens", 0)
+            prompt_tokens, completion_tokens = parse_usage_from_response(upstream_data)
+            if prompt_tokens == 0 and estimated_prompt_tokens > 0:
+                prompt_tokens = estimated_prompt_tokens
+            if completion_tokens == 0:
+                completion_text_parts: list[str] = []
+                for choice_data in upstream_data.get("choices", []):
+                    msg = choice_data.get("message", {})
+                    content = msg.get("content")
+                    if isinstance(content, str):
+                        completion_text_parts.append(content)
+                    for tool_call in msg.get("tool_calls") or []:
+                        fn = tool_call.get("function") or {}
+                        if fn.get("name"):
+                            completion_text_parts.append(str(fn["name"]))
+                        if fn.get("arguments"):
+                            completion_text_parts.append(str(fn["arguments"]))
+                if completion_text_parts:
+                    completion_tokens = estimate_token_count(" ".join(completion_text_parts))
             total_tokens = prompt_tokens + completion_tokens
 
             input_cost = (prompt_tokens / 1000) * model_obj.cost_per_1k_input
@@ -238,6 +269,7 @@ async def _handle_stream(
     payload: dict,
     headers: dict,
     db,
+    estimated_prompt_tokens: int = 0,
 ):
     queue_slot = None
     if settings.upstream_queue_enabled:
@@ -248,6 +280,7 @@ async def _handle_stream(
         try:
             async for event in _iter_stream_events(
                 request_id, model_id, model_obj, upstream_url, payload, headers, db,
+                estimated_prompt_tokens=estimated_prompt_tokens,
             ):
                 yield event
         finally:
@@ -265,10 +298,12 @@ async def _iter_stream_events(
     payload: dict,
     headers: dict,
     db,
+    estimated_prompt_tokens: int = 0,
 ):
     start_time = time.monotonic()
     prompt_tokens = 0
     completion_tokens = 0
+    completion_text_parts: list[str] = []
     first_chunk = True
 
     try:
@@ -303,8 +338,23 @@ async def _iter_stream_events(
 
                     usage = chunk.get("usage")
                     if usage:
-                        prompt_tokens = usage.get("prompt_tokens", 0)
-                        completion_tokens = usage.get("completion_tokens", 0)
+                        chunk_prompt, chunk_completion = parse_usage_from_response(chunk)
+                        if chunk_prompt:
+                            prompt_tokens = chunk_prompt
+                        if chunk_completion:
+                            completion_tokens = chunk_completion
+
+                    for choice in chunk.get("choices", []):
+                        delta = choice.get("delta", {})
+                        content = delta.get("content")
+                        if isinstance(content, str):
+                            completion_text_parts.append(content)
+                        for tool_call in delta.get("tool_calls") or []:
+                            fn = tool_call.get("function") or {}
+                            if fn.get("name"):
+                                completion_text_parts.append(str(fn["name"]))
+                            if fn.get("arguments"):
+                                completion_text_parts.append(str(fn["arguments"]))
 
                     chunk_id = chunk.get("id", f"chatcmpl-{request_id[:12]}")
                     created = chunk.get("created", int(datetime.utcnow().timestamp()))
@@ -322,6 +372,11 @@ async def _iter_stream_events(
                         first_chunk = False
 
                 yield {"event": "done", "data": "[DONE]"}
+
+                if prompt_tokens == 0 and estimated_prompt_tokens > 0:
+                    prompt_tokens = estimated_prompt_tokens
+                if completion_tokens == 0 and completion_text_parts:
+                    completion_tokens = estimate_token_count("".join(completion_text_parts))
 
                 elapsed = (time.monotonic() - start_time) * 1000
                 total_cost = (
