@@ -217,90 +217,216 @@ def _compute_reasoning_complexity(text: str, text_lower: str) -> float:
     return compute_reasoning_complexity(text)
 
 
-def match_model_by_rules(
+def _model_caps(model: Model) -> set[str]:
+    return set(model.capabilities or [])
+
+
+def _needs_tool_support(features: PromptFeatures, *, request_has_tools: bool = False) -> bool:
+    return features.has_tool_calls or request_has_tools
+
+
+def _compute_rule_score(
+    features: PromptFeatures,
+    model: Model,
+    *,
+    request_has_tools: bool = False,
+) -> float:
+    """Score how well a model matches prompt capability signals."""
+    caps = _model_caps(model)
+    score = 0.0
+    if features.has_images and ModelCapability.vision.value in caps:
+        score += 3.0
+    if (features.has_tool_calls or request_has_tools) and (
+        ModelCapability.tool_calling.value in caps
+        or ModelCapability.function_calling.value in caps
+    ):
+        score += 2.0
+    if features.token_count > 4000 and ModelCapability.long_context.value in caps:
+        score += 2.0
+    if features.has_code_blocks and ModelCapability.code.value in caps:
+        score += 1.5
+    reasoning_signal = (
+        features.task_difficulty if features.task_difficulty > 0 else features.reasoning_complexity
+    )
+    if reasoning_signal > 0.5 and ModelCapability.reasoning.value in caps:
+        score += 2.0
+    if reasoning_signal > 0.5 and "reasoning" in (model.tags or []):
+        score += 1.0
+    score += model.priority * 0.1
+    return score
+
+
+def _filter_eligible_models(
     features: PromptFeatures,
     models: list[Model],
-) -> tuple[Model | None, float]:
-    scored: list[tuple[Model, float]] = []
+    *,
+    request_has_tools: bool = False,
+) -> list[Model]:
+    """Hard capability/context filter applied before rule or complexity ranking."""
+    needs_tools = _needs_tool_support(features, request_has_tools=request_has_tools)
+    eligible: list[Model] = []
+
     for model in models:
         if not model.is_active:
             continue
-        caps = set(model.capabilities or [])
-        score = 0.0
-        if features.has_images and ModelCapability.vision.value in caps:
-            score += 3.0
-        if features.has_tool_calls and ModelCapability.tool_calling.value in caps:
-            score += 2.0
-        if features.token_count > 4000 and ModelCapability.long_context.value in caps:
-            score += 2.0
-        if features.has_code_blocks and ModelCapability.code.value in caps:
-            score += 1.5
-        reasoning_signal = (
-            features.task_difficulty if features.task_difficulty > 0 else features.reasoning_complexity
-        )
-        if reasoning_signal > 0.5 and ModelCapability.reasoning.value in caps:
-            score += 2.0
-        if reasoning_signal > 0.5 and "reasoning" in (model.tags or []):
-            score += 1.0
-        score += model.priority * 0.1
-        scored.append((model, score))
+        caps = _model_caps(model)
 
-    if not scored:
+        if features.has_images and ModelCapability.vision.value not in caps:
+            continue
+        if needs_tools and (
+            ModelCapability.tool_calling.value not in caps
+            and ModelCapability.function_calling.value not in caps
+        ):
+            continue
+        if features.token_count > model.context_window:
+            continue
+
+        eligible.append(model)
+
+    # Vision-capable models are for image prompts; skip them when non-vision options exist.
+    if not features.has_images:
+        non_vision = [
+            m for m in eligible
+            if ModelCapability.vision.value not in _model_caps(m)
+        ]
+        if non_vision:
+            eligible = non_vision
+
+    return eligible
+
+
+def _model_total_cost(model: Model) -> float:
+    return model.cost_per_1k_input + model.cost_per_1k_output
+
+
+def _pick_fastest_cheapest(models: list[Model]) -> Model | None:
+    """Among pre-filtered candidates, prefer speed then cost."""
+    if not models:
+        return None
+    return min(
+        models,
+        key=lambda model: (
+            -(model.estimated_tokens_per_second or 0.0),
+            _model_total_cost(model),
+            -(model.priority or 0),
+            model.id,
+        ),
+    )
+
+
+def _pick_best_by_rules(
+    features: PromptFeatures,
+    models: list[Model],
+    *,
+    request_has_tools: bool = False,
+) -> tuple[Model | None, float]:
+    if not models:
         return None, 0.0
 
-    scored.sort(key=lambda x: x[1], reverse=True)
-    best_model, best_score = scored[0]
-    confidence = min(best_score / 5.0, 1.0)
+    rule_scores = {
+        model.id: _compute_rule_score(
+            features, model, request_has_tools=request_has_tools,
+        )
+        for model in models
+    }
+    best_rule = max(rule_scores.values())
+    top_tier = [
+        model for model in models
+        if rule_scores[model.id] >= best_rule - 1e-9
+    ]
+    best_model = _pick_fastest_cheapest(top_tier)
+    if not best_model:
+        return None, 0.0
+
+    best_score = rule_scores[best_model.id]
+    confidence = min(best_score / 5.0, 1.0) if best_score > 0 else 0.3
     return best_model, confidence
+
+
+def select_routing_model(
+    features: PromptFeatures,
+    models: list[Model],
+    *,
+    request_has_tools: bool = False,
+) -> tuple[Model | None, float, str]:
+    """Route to the fastest, then cheapest model that meets minimum requirements.
+
+    Minimum requirements are enforced by the capability/context filter and the
+    highest rule-score tier (vision, tools, code, reasoning, etc.). When
+    ``settings.complexity_routing_enabled`` is true, models must also satisfy
+    ``max_complexity_score`` before speed/cost ranking is applied.
+    """
+    eligible = _filter_eligible_models(
+        features, models, request_has_tools=request_has_tools,
+    )
+    if not eligible:
+        return None, 0.0, "default"
+
+    rule_scores = {
+        model.id: _compute_rule_score(features, model, request_has_tools=request_has_tools)
+        for model in eligible
+    }
+    best_rule = max(rule_scores.values())
+    top_tier = [model for model in eligible if rule_scores[model.id] >= best_rule - 1e-9]
+
+    use_complexity = (
+        settings.complexity_routing_enabled
+        and any(model.max_complexity_score is not None for model in top_tier)
+    )
+    if use_complexity:
+        model, confidence = match_model_by_complexity(features, top_tier)
+        if model:
+            return model, confidence, "complexity"
+
+    best_model = _pick_fastest_cheapest(top_tier)
+    if not best_model:
+        return None, 0.0, "default"
+
+    best_score = rule_scores[best_model.id]
+    confidence = min(best_score / 5.0, 1.0) if best_score > 0 else 0.3
+    return best_model, confidence, "rules"
+
+
+def match_model_by_rules(
+    features: PromptFeatures,
+    models: list[Model],
+    *,
+    request_has_tools: bool = False,
+) -> tuple[Model | None, float]:
+    eligible = _filter_eligible_models(
+        features, models, request_has_tools=request_has_tools,
+    )
+    return _pick_best_by_rules(features, eligible, request_has_tools=request_has_tools)
 
 
 def match_model_by_complexity(
     features: PromptFeatures,
     models: list[Model],
 ) -> tuple[Model | None, float]:
-    """Select the smallest capable model that can handle the prompt's complexity.
+    """Pick the fastest/cheapest model that can handle prompt complexity.
 
-    Strategy:
-    1. Filter models whose max_complexity_score >= routing difficulty
-    2. Among capable models, prefer the lowest max_complexity_score (smallest sufficient model)
-    3. Then lowest total cost, then highest estimated tokens/sec
-    4. Models without complexity metadata are last-resort fallbacks
+    Only used when ``settings.complexity_routing_enabled`` is true.
+    Callers should pass models already filtered by ``_filter_eligible_models``.
     """
     complexity = _compute_complexity_score(features)
-    # (model, capacity_tier, cost, speed) — lower capacity_tier is a smaller model
-    capable: list[tuple[Model, float, float, float]] = []
+    capable: list[Model] = []
 
     for model in models:
         if not model.is_active:
             continue
 
-        caps = set(model.capabilities or [])
-
-        if features.has_images and ModelCapability.vision.value not in caps:
-            continue
-        if features.has_tool_calls and ModelCapability.tool_calling.value not in caps:
-            continue
-        if features.token_count > model.context_window:
-            continue
-
         max_cx = model.max_complexity_score
-        if max_cx is not None:
-            if complexity > max_cx:
-                continue
-            capacity_tier = max_cx
-        else:
-            # No metadata — only use when nothing with explicit capacity matches
-            capacity_tier = 2.0
+        if max_cx is not None and complexity > max_cx:
+            continue
 
-        total_cost = model.cost_per_1k_input + model.cost_per_1k_output
-        speed = model.estimated_tokens_per_second or 0.0
-        capable.append((model, capacity_tier, total_cost, speed))
+        capable.append(model)
 
     if not capable:
         return None, 0.0
 
-    capable.sort(key=lambda x: (x[1], x[2], -x[3]))
-    best_model = capable[0][0]
+    best_model = _pick_fastest_cheapest(capable)
+    if not best_model:
+        return None, 0.0
 
     max_cx = best_model.max_complexity_score
     if max_cx is not None:
@@ -366,25 +492,20 @@ async def classify_and_route(
 
     matched_model = None
     confidence = 0.0
+    routing_method = "default"
 
-    # Try complexity-based routing first (if models have complexity metadata)
-    has_complexity_metadata = any(m.max_complexity_score is not None for m in models)
-    if has_complexity_metadata:
-        cx_model, cx_confidence = match_model_by_complexity(features, models)
-        if cx_model:
-            logger.info(
-                "Complexity-matched model %s with confidence %.2f (task_difficulty %.2f, type %s)",
-                cx_model.id, cx_confidence, features.task_difficulty, features.task_type,
-            )
-            matched_model = cx_model
-            confidence = cx_confidence
+    request_has_tools = bool(request.tools)
+    matched_model, confidence, routing_method = select_routing_model(
+        features, models, request_has_tools=request_has_tools,
+    )
 
-    # Fall back to rule-based matching if complexity routing didn't produce a match
-    if not matched_model:
-        matched_model, confidence = match_model_by_rules(features, models)
+    if matched_model:
+        logger.info(
+            "Routed to %s via %s (confidence %.2f, task_type %s)",
+            matched_model.id, routing_method, confidence, features.task_type,
+        )
 
     if matched_model and confidence >= settings.classifier_min_confidence:
-        logger.info("Rule-matched model %s with confidence %.2f", matched_model.id, confidence)
         return matched_model.id
 
     if matched_model and matched_model.id:
@@ -469,9 +590,16 @@ def _evaluate_models_for_routing(
     features: PromptFeatures,
     models: list[Model],
     routing_difficulty: float,
+    *,
+    request_has_tools: bool = False,
 ) -> list[dict]:
-    """Document which models pass/fail complexity and rule checks."""
-    from app.core.models import ModelCapability
+    """Document which models pass/fail capability and complexity checks."""
+    eligible_ids = {
+        m.id for m in _filter_eligible_models(
+            features, models, request_has_tools=request_has_tools,
+        )
+    }
+    needs_tools = _needs_tool_support(features, request_has_tools=request_has_tools)
 
     evaluations: list[dict] = []
     for model in models:
@@ -486,40 +614,38 @@ def _evaluate_models_for_routing(
             })
             continue
 
-        caps = set(model.capabilities or [])
+        caps = _model_caps(model)
         reasons: list[str] = []
         if features.has_images and ModelCapability.vision.value not in caps:
             reasons.append("missing vision capability")
-        if features.has_tool_calls and ModelCapability.tool_calling.value not in caps:
+        if needs_tools and (
+            ModelCapability.tool_calling.value not in caps
+            and ModelCapability.function_calling.value not in caps
+        ):
             reasons.append("missing tool_calling capability")
         if features.token_count > model.context_window:
-            reasons.append(f"token_count {features.token_count} > context_window {model.context_window}")
+            reasons.append(
+                f"token_count {features.token_count} > context_window {model.context_window}"
+            )
+        if model.id not in eligible_ids and not reasons:
+            reasons.append("vision model excluded (no images in prompt)")
 
         max_cx = model.max_complexity_score
-        if max_cx is not None and routing_difficulty > max_cx:
+        rule_score = _compute_rule_score(
+            features, model, request_has_tools=request_has_tools,
+        )
+
+        eligible = model.id in eligible_ids
+        if (
+            eligible
+            and settings.complexity_routing_enabled
+            and max_cx is not None
+            and routing_difficulty > max_cx
+        ):
             reasons.append(
                 f"routing_difficulty {routing_difficulty:.3f} > max_complexity_score {max_cx:.3f}"
             )
-
-        rule_score = 0.0
-        if features.has_images and ModelCapability.vision.value in caps:
-            rule_score += 3.0
-        if features.has_tool_calls and ModelCapability.tool_calling.value in caps:
-            rule_score += 2.0
-        if features.token_count > 4000 and ModelCapability.long_context.value in caps:
-            rule_score += 2.0
-        if features.has_code_blocks and ModelCapability.code.value in caps:
-            rule_score += 1.5
-        reasoning_signal = (
-            features.task_difficulty if features.task_difficulty > 0 else features.reasoning_complexity
-        )
-        if reasoning_signal > 0.5 and ModelCapability.reasoning.value in caps:
-            rule_score += 2.0
-        if reasoning_signal > 0.5 and "reasoning" in (model.tags or []):
-            rule_score += 1.0
-        rule_score += model.priority * 0.1
-
-        eligible = not reasons
+            eligible = False
         evaluations.append({
             "model_id": model.id,
             "eligible": eligible,
@@ -577,7 +703,10 @@ async def explain_routing(
             "rule_candidate": None,
         }
 
-    evaluations = _evaluate_models_for_routing(features, models, routing_difficulty)
+    evaluations = _evaluate_models_for_routing(
+        features, models, routing_difficulty,
+        request_has_tools=bool(request.tools),
+    )
 
     matched_model = None
     confidence = 0.0
@@ -585,23 +714,33 @@ async def explain_routing(
     complexity_candidate = None
     rule_candidate = None
 
-    has_complexity_metadata = any(m.max_complexity_score is not None for m in models)
-    if has_complexity_metadata:
-        cx_model, cx_confidence = match_model_by_complexity(features, models)
-        if cx_model:
-            complexity_candidate = cx_model.id
-            matched_model = cx_model
-            confidence = cx_confidence
-            routing_method = "complexity"
+    selected, confidence, routing_method = select_routing_model(
+        features, models, request_has_tools=bool(request.tools),
+    )
+    matched_model = selected
 
-    rule_model, rule_confidence = match_model_by_rules(features, models)
+    rule_model, rule_confidence = match_model_by_rules(
+        features, models, request_has_tools=bool(request.tools),
+    )
     if rule_model:
         rule_candidate = rule_model.id
 
-    if not matched_model:
-        matched_model = rule_model
-        confidence = rule_confidence
-        routing_method = "rules"
+    if settings.complexity_routing_enabled:
+        eligible = _filter_eligible_models(
+            features, models, request_has_tools=bool(request.tools),
+        )
+        rule_scores = {
+            m.id: _compute_rule_score(
+                features, m, request_has_tools=bool(request.tools),
+            )
+            for m in eligible
+        }
+        if rule_scores:
+            best_rule = max(rule_scores.values())
+            top_tier = [m for m in eligible if rule_scores[m.id] >= best_rule - 1e-9]
+            cx_model, _ = match_model_by_complexity(features, top_tier)
+            if cx_model:
+                complexity_candidate = cx_model.id
 
     model_id = matched_model.id if matched_model else settings.default_model
     if not matched_model:

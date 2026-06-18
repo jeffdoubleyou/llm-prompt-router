@@ -179,10 +179,12 @@ Every `POST /v1/chat/completions` request goes through feature extraction and ru
 
 ### What routes requests (live path)
 
-1. **Feature extraction** — Token count, code/URL/image/tool signals, language, reasoning complexity, etc. (`router_service.extract_features`).
-2. **Complexity routing** — If models have `max_complexity_score`, pick the **smallest** capable model (lowest `max_complexity_score` that still fits the prompt's routing difficulty), then cost, then speed.
-3. **Rule-based routing** — Score models by capabilities (vision +3, tools +2, long context +2, code +1.5, reasoning +2, priority bias).
-4. **Route** — The highest-scoring model is used immediately. If confidence ≥ `CLASSIFIER_MIN_CONFIDENCE` (default 0.6), done.
+1. **Feature extraction** — Token count, code/URL/image/tool signals, language, task type, etc. (`router_service.extract_features`).
+2. **Capability filter** — Hard requirements first: vision for images, tool calling for tools, code for code blocks, context window limits. Vision-capable models are skipped when the prompt has no images and a non-vision model can handle it.
+3. **Rule-based scoring** — Score remaining models by capability match (vision +3, tools +2, long context +2, code +1.5, reasoning +2, priority bias). Keep the highest-scoring tier.
+4. **Speed/cost ranking** — Among that tier, pick the **fastest** model (`estimated_tokens_per_second`), then the **cheapest** (input + output cost per 1k tokens).
+5. **Complexity routing (optional)** — When `COMPLEXITY_ROUTING_ENABLED=true`, also require `max_complexity_score` to cover the prompt's routing difficulty before speed/cost ranking. **Default is off** — no parameter/complexity-tier selection unless you enable it.
+6. **Route** — The selected model is used immediately. If confidence ≥ `CLASSIFIER_MIN_CONFIDENCE` (default 0.6), done.
 
 ### What the ML classifier does today
 
@@ -206,6 +208,7 @@ To train: `python -m ml.train` (see [ML classifier guide](docs/ml-classifier-tra
 | `EMBEDDING_BLEND_WEIGHT`    | `0.55`                                              | Weight on embedding vs heuristic difficulty (0–1) |
 | `EMBEDDING_MODEL_NAME`      | `sentence-transformers/all-MiniLM-L6-v2`            | Local embedding model                             |
 | `UPSTREAM_QUEUE_ENABLED`    | `false`                                             | FIFO queue per upstream base URL (llama.cpp)      |
+| `COMPLEXITY_ROUTING_ENABLED`| `false`                                             | Filter by max_complexity_score before speed/cost  |
 | `WORKER_CONCURRENCY`        | `4`                                                 | ML worker count                                   |
 | `UPSTREAM_TIMEOUT`          | `120.0`                                             | Upstream API timeout (seconds)                    |
 | `DEFAULT_MODEL`             | `gpt-4o-mini`                                       | Fallback model                                    |

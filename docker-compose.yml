@@ -45,6 +45,7 @@ services:
       EMBEDDING_ROUTING_ENABLED: "true"
       UPSTREAM_QUEUE_ENABLED: "true"
       EMBEDDING_BLEND_WEIGHT: 0.25
+      COMPLEXITY_ROUTING_ENABLED: "false"
     ports:
       - "8001:8000"
     depends_on:

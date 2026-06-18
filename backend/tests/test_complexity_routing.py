@@ -21,10 +21,13 @@ sys.modules["asyncpg"] = MagicMock()
 from app.core.models import PromptFeatures
 from app.services.router_service import (
     _compute_complexity_score,
+    _filter_eligible_models,
     match_model_by_complexity,
     match_model_by_rules,
     extract_features,
+    select_routing_model,
 )
+from app.core.config import settings
 from app.models.db import Model
 
 # ---------------------------------------------------------------------------
@@ -173,8 +176,8 @@ class TestExtractFeatures:
 # ---------------------------------------------------------------------------
 
 class TestMatchModelByComplexity:
-    def test_simple_prompt_selects_cheap_model(self):
-        """A simple prompt should route to the cheapest capable model."""
+    def test_simple_prompt_selects_fastest_cheapest_capable_model(self):
+        """A simple prompt should route to the fastest/cheapest capable model."""
         models = [
             _make_model(
                 model_id="cheap-fast",
@@ -264,9 +267,78 @@ class TestMatchModelByComplexity:
             ),
         ]
         features = PromptFeatures(has_images=True)
-        model, _ = match_model_by_complexity(features, models)
+        model, _, method = select_routing_model(features, models)
         assert model is not None
         assert model.id == "has-vision"
+        assert method == "rules"
+
+    def test_non_image_prompt_excludes_vision_models_when_alternatives_exist(self):
+        """Vision models should only be used when the prompt contains images."""
+        models = [
+            _make_model(
+                model_id="vision-slow",
+                capabilities=["text", "vision", "tool_calling"],
+                max_complexity_score=0.6,
+                estimated_tokens_per_second=10.0,
+                priority=2,
+            ),
+            _make_model(
+                model_id="text-fast",
+                capabilities=["text", "tool_calling"],
+                max_complexity_score=0.95,
+                estimated_tokens_per_second=35.0,
+                priority=3,
+            ),
+        ]
+        features = PromptFeatures(
+            has_images=False,
+            has_tool_calls=True,
+            task_difficulty=0.48,
+        )
+        model, _, method = select_routing_model(features, models)
+        assert model is not None
+        assert model.id == "text-fast"
+        assert method == "rules"
+
+    def test_complexity_routing_disabled_uses_capability_rules_only(self, monkeypatch):
+        monkeypatch.setattr(settings, "complexity_routing_enabled", False)
+        models = [
+            _make_model(
+                model_id="small",
+                capabilities=["text"],
+                max_complexity_score=0.3,
+                estimated_tokens_per_second=60.0,
+            ),
+            _make_model(
+                model_id="large",
+                capabilities=["text"],
+                max_complexity_score=0.95,
+                estimated_tokens_per_second=10.0,
+            ),
+        ]
+        features = PromptFeatures(task_difficulty=0.8)
+        model, _, method = select_routing_model(features, models)
+        assert model is not None
+        assert model.id == "small"
+        assert method == "rules"
+
+    def test_code_blocks_boost_rule_score(self):
+        models = [
+            _make_model(
+                model_id="no-code",
+                capabilities=["text", "streaming"],
+                max_complexity_score=0.9,
+            ),
+            _make_model(
+                model_id="has-code",
+                capabilities=["text", "streaming", "code"],
+                max_complexity_score=0.9,
+            ),
+        ]
+        features = PromptFeatures(has_code_blocks=True)
+        model, _ = match_model_by_rules(features, models)
+        assert model is not None
+        assert model.id == "has-code"
 
     def test_context_window_enforced(self):
         """Models with context_window smaller than token_count should be excluded."""
@@ -283,31 +355,58 @@ class TestMatchModelByComplexity:
             ),
         ]
         features = PromptFeatures(token_count=5000)
-        model, _ = match_model_by_complexity(features, models)
-        assert model is not None
-        assert model.id == "large-context"
+        eligible = _filter_eligible_models(features, models)
+        assert len(eligible) == 1
+        assert eligible[0].id == "large-context"
 
-    def test_no_complexity_metadata_fallback(self):
-        """Models without complexity metadata should still be considered."""
+    def test_default_routing_prefers_fastest_then_cheapest(self):
+        """Among capable models, pick fastest then cheapest (not by parameter tier)."""
+        models = [
+            _make_model(
+                model_id="slow-cheap",
+                capabilities=["text"],
+                cost_per_1k_input=0.0001,
+                cost_per_1k_output=0.0003,
+                max_complexity_score=0.5,
+                estimated_tokens_per_second=10.0,
+            ),
+            _make_model(
+                model_id="fast-expensive",
+                capabilities=["text"],
+                cost_per_1k_input=0.01,
+                cost_per_1k_output=0.04,
+                max_complexity_score=0.95,
+                estimated_tokens_per_second=80.0,
+            ),
+        ]
+        features = PromptFeatures(token_count=20, reasoning_complexity=0.1)
+        model, _, method = select_routing_model(features, models)
+        assert model is not None
+        assert model.id == "fast-expensive"
+        assert method == "rules"
+
+    def test_no_complexity_metadata_still_eligible(self):
+        """Models without max_complexity_score remain eligible when complexity routing filters."""
         models = [
             _make_model(
                 model_id="no-metadata",
                 cost_per_1k_input=0.001,
                 cost_per_1k_output=0.005,
                 max_complexity_score=None,
+                estimated_tokens_per_second=50.0,
             ),
             _make_model(
                 model_id="with-metadata",
                 cost_per_1k_input=0.0001,
                 cost_per_1k_output=0.0003,
                 max_complexity_score=0.5,
+                estimated_tokens_per_second=20.0,
             ),
         ]
         features = PromptFeatures(token_count=100)
         model, _ = match_model_by_complexity(features, models)
         assert model is not None
-        # Should pick the cheaper model with metadata
-        assert model.id == "with-metadata"
+        assert model.id == "no-metadata"
 
     def test_same_capacity_faster_model_wins(self):
         """When capacity tier and cost are equal, prefer the faster model."""
@@ -332,8 +431,8 @@ class TestMatchModelByComplexity:
         assert model is not None
         assert model.id == "fast"
 
-    def test_zero_cost_prefers_smallest_capable_model(self):
-        """Local models with $0 cost should not route to the largest/fastest model."""
+    def test_zero_cost_prefers_fastest_capable_model(self):
+        """Local models with $0 cost should prefer the fastest capable model."""
         models = [
             _make_model(
                 model_id="small",
@@ -353,7 +452,7 @@ class TestMatchModelByComplexity:
         features = PromptFeatures(task_difficulty=0.58, requirement_load=0.0)
         model, _ = match_model_by_complexity(features, models)
         assert model is not None
-        assert model.id == "small"
+        assert model.id == "large"
 
     def test_tool_call_capability_required(self):
         """Tool call prompts should skip models without tool_calling capability."""
@@ -370,7 +469,7 @@ class TestMatchModelByComplexity:
             ),
         ]
         features = PromptFeatures(has_tool_calls=True)
-        model, _ = match_model_by_complexity(features, models)
+        model, _ = match_model_by_rules(features, models)
         assert model is not None
         assert model.id == "has-tools"
 

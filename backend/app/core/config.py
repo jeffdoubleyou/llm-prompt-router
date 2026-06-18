@@ -59,5 +59,8 @@ class Settings(BaseSettings):
     # Serialize upstream requests per base URL (e.g. llama.cpp single-model servers)
     upstream_queue_enabled: bool = False
 
+    # When False, rank eligible models by speed then cost only (no max_complexity_score filter)
+    complexity_routing_enabled: bool = False
+
 
 settings = Settings()
