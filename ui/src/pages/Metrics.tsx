@@ -13,6 +13,7 @@ import {
   Legend,
 } from "recharts";
 import { fetchMetricsSummary, fetchTimeSeries } from "../lib/api";
+import { formatLatencySeconds, msToSeconds } from "../lib/format";
 
 export default function Metrics() {
   const [period, setPeriod] = useState(60);
@@ -47,9 +48,9 @@ export default function Metrics() {
   const chartData = Object.entries(hourlyAgg).map(([ts, vals]) => ({
     timestamp: ts,
     requests: vals.requests,
-    avg_latency_ms:
+    avg_latency_s:
       vals.requests > 0
-        ? Math.round((vals.latency / vals.requests) * 10) / 10
+        ? Math.round(msToSeconds(vals.latency / vals.requests) * 100) / 100
         : 0,
     cost: Math.round(vals.cost * 10000) / 10000,
     errors: vals.errors,
@@ -123,7 +124,10 @@ export default function Metrics() {
                   return `${d.getHours().toString().padStart(2, "0")}:${d.getMinutes().toString().padStart(2, "0")}`;
                 }}
               />
-              <YAxis tick={{ fill: "#9ca3af", fontSize: 11 }} />
+              <YAxis
+                tick={{ fill: "#9ca3af", fontSize: 11 }}
+                tickFormatter={(v) => `${v}s`}
+              />
               <Tooltip
                 contentStyle={{
                   backgroundColor: "#111827",
@@ -131,14 +135,17 @@ export default function Metrics() {
                   borderRadius: "8px",
                   color: "#e5e7eb",
                 }}
+                formatter={(value: number, name: string) =>
+                  name === "Avg Latency (s)" ? [`${value.toFixed(2)} s`, name] : [value, name]
+                }
               />
               <Line
                 type="monotone"
-                dataKey="avg_latency_ms"
+                dataKey="avg_latency_s"
                 stroke="#22d3ee"
                 strokeWidth={2}
                 dot={false}
-                name="Avg Latency (ms)"
+                name="Avg Latency (s)"
               />
               <Legend />
             </LineChart>
@@ -243,7 +250,7 @@ export default function Metrics() {
                     {m.total_tokens.toLocaleString()}
                   </td>
                   <td className="py-2 px-3 text-right">
-                    {m.avg_latency_ms.toFixed(1)} ms
+                    {formatLatencySeconds(m.avg_latency_ms)}
                   </td>
                   <td className="py-2 px-3 text-right">
                     ${m.total_cost.toFixed(4)}

@@ -2,6 +2,7 @@ import { useQuery } from "@tanstack/react-query";
 import { ListOrdered, Bot, Timer, CheckCircle2, XCircle } from "lucide-react";
 import UpstreamQueuePanel from "../components/UpstreamQueuePanel";
 import { fetchQueueStatus } from "../lib/api";
+import { formatLatencySeconds } from "../lib/format";
 
 export default function Queue() {
   const { data, isLoading } = useQuery({
@@ -29,7 +30,7 @@ export default function Queue() {
     },
     {
       label: "Avg Processing Time",
-      value: `${(data?.avg_processing_time_ms ?? 0).toFixed(1)} ms`,
+      value: formatLatencySeconds(data?.avg_processing_time_ms ?? 0),
       icon: Timer,
       color: "text-yellow-400",
       bg: "bg-yellow-900/20",
@@ -204,7 +205,7 @@ export default function Queue() {
                 <div className="p-3 rounded bg-gray-800/50">
                   <div className="text-gray-500 text-xs">Avg Processing</div>
                   <div className="text-xl font-bold text-gray-200">
-                    {data.avg_processing_time_ms.toFixed(1)} ms
+                    {formatLatencySeconds(data.avg_processing_time_ms)}
                   </div>
                 </div>
                 <div className="p-3 rounded bg-gray-800/50">

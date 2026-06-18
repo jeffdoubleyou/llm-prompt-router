@@ -8,6 +8,7 @@ import {
   CheckCircle2,
 } from "lucide-react";
 import { fetchLogs, RequestLogEntry } from "../lib/api";
+import { formatLatencySeconds } from "../lib/format";
 
 export default function Logs() {
   const [page, setPage] = useState(0);
@@ -113,7 +114,7 @@ export default function Logs() {
                     {log.total_tokens.toLocaleString()}
                   </td>
                   <td className="py-3 px-4 text-right">
-                    {log.latency_ms.toFixed(1)} ms
+                    {formatLatencySeconds(log.latency_ms)}
                   </td>
                   <td className="py-3 px-4 text-right">
                     ${log.cost.toFixed(6)}
@@ -208,7 +209,7 @@ function renderExpandedRow(logs: RequestLogEntry[], id: string) {
         </div>
         <div>
           <span className="text-gray-500">Latency: </span>
-          <span>{log.latency_ms.toFixed(2)} ms</span>
+          <span>{formatLatencySeconds(log.latency_ms)}</span>
         </div>
         <div>
           <span className="text-gray-500">Cost: </span>

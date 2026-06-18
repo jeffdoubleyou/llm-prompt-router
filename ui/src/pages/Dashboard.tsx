@@ -21,6 +21,7 @@ import {
 } from "lucide-react";
 import { useLiveMetrics } from "../hooks/useMetrics";
 import { fetchDashboardMetrics } from "../lib/api";
+import { formatLatencySeconds, msToSeconds } from "../lib/format";
 import UpstreamQueuePanel from "../components/UpstreamQueuePanel";
 
 const formatNum = (n: number) =>
@@ -47,6 +48,11 @@ export default function Dashboard() {
       </div>
     );
   }
+
+  const hourlyChartData = (data?.hourly ?? []).map((pt) => ({
+    ...pt,
+    avg_latency_s: msToSeconds(pt.avg_latency_ms),
+  }));
 
   const stats = [
     {
@@ -138,7 +144,7 @@ export default function Dashboard() {
             <div>
               <span className="text-gray-500">Avg Latency</span>
               <p className="text-lg font-semibold text-gray-200">
-                {metric.avg_latency_ms.toFixed(1)} ms
+                {formatLatencySeconds(metric.avg_latency_ms)}
               </p>
             </div>
             <div>
@@ -198,7 +204,7 @@ export default function Dashboard() {
             Latency Trend (24h)
           </h3>
           <ResponsiveContainer width="100%" height={250}>
-            <LineChart data={data?.hourly ?? []}>
+            <LineChart data={hourlyChartData}>
               <CartesianGrid strokeDasharray="3 3" stroke="#1f2937" />
               <XAxis
                 dataKey="timestamp"
@@ -208,7 +214,10 @@ export default function Dashboard() {
                   return `${d.getHours().toString().padStart(2, "0")}:00`;
                 }}
               />
-              <YAxis tick={{ fill: "#9ca3af", fontSize: 11 }} />
+              <YAxis
+                tick={{ fill: "#9ca3af", fontSize: 11 }}
+                tickFormatter={(v) => `${v}s`}
+              />
               <Tooltip
                 contentStyle={{
                   backgroundColor: "#111827",
@@ -216,13 +225,15 @@ export default function Dashboard() {
                   borderRadius: "8px",
                   color: "#e5e7eb",
                 }}
+                formatter={(value: number) => [`${value.toFixed(2)} s`, "Avg Latency"]}
               />
               <Line
                 type="monotone"
-                dataKey="avg_latency_ms"
+                dataKey="avg_latency_s"
                 stroke="#22d3ee"
                 strokeWidth={2}
                 dot={false}
+                name="Avg Latency (s)"
               />
               <Legend />
             </LineChart>
