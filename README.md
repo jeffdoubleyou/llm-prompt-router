@@ -1,6 +1,8 @@
 # LLM Prompt Router
 
-A production-ready OpenAI-compatible proxy with intelligent prompt routing, real-time metrics, and ML-based classifier fallback.
+🚧 Work In Progress
+
+An OpenAI-compatible proxy with intelligent prompt routing, real-time metrics, and ML-based classifier fallback.
 
 ## Architecture
 
@@ -217,4 +219,29 @@ To train: `python -m ml.train` (see [ML classifier guide](docs/ml-classifier-tra
 | `UPSTREAM_TIMEOUT`          | `120.0`                                             | Upstream API timeout (seconds)                    |
 | `DEFAULT_MODEL`             | `gpt-4o-mini`                                       | Fallback model                                    |
 
+## Screenshots
+
+### Dashboard
+<img width="953" height="997" alt="image" src="https://github.com/user-attachments/assets/3ab81324-e9bd-4724-b7be-09781f249b6a" />
+
+### Models
+<img width="962" height="773" alt="image" src="https://github.com/user-attachments/assets/451775c6-792c-4fbb-9191-2390b28583e9" />
+
+### Logs
+<img width="962" height="773" alt="image" src="https://github.com/user-attachments/assets/7f50637d-6ce7-42ec-8fed-0066a71bb84e" />
+
+### Prompt Debug
+<img width="962" height="773" alt="image" src="https://github.com/user-attachments/assets/668557ce-e709-4911-a09e-c1d58b5aba82" />
+
+### Prompt Debug -- Detail / Parsed
+<img width="947" height="994" alt="image" src="https://github.com/user-attachments/assets/d32f8c34-eb64-4c34-a864-c0e09e38de2f" />
+
+### Complexity Debug
+<img width="953" height="1002" alt="image" src="https://github.com/user-attachments/assets/80103ef6-4560-4ea2-a98b-8ce0153073a1" />
+
+### Metrics
+<img width="962" height="837" alt="image" src="https://github.com/user-attachments/assets/68cbda4e-333d-4ce4-9b2e-c9ced653c8e2" />
+
+### Request Queue
+<img width="963" height="717" alt="image" src="https://github.com/user-attachments/assets/02cfb7b4-9073-4011-835d-8df8b231fbae" />
 
