@@ -4,6 +4,7 @@ import os
 from pathlib import Path
 from typing import Literal
 
+from pydantic import field_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 
@@ -61,6 +62,19 @@ class Settings(BaseSettings):
 
     # When False, rank eligible models by speed then cost only (no max_complexity_score filter)
     complexity_routing_enabled: bool = False
+
+    # llama.cpp GBNF grammar limits
+    llamacpp_max_tools: int = 20
+    llamacpp_tool_limit_mode: Literal["reject", "truncate"] = "reject"
+    llamacpp_base_url_prefixes: list[str] = []
+    llamacpp_providers: list[str] = ["custom", "llama", "ollama", "llamacpp"]
+
+    @field_validator("llamacpp_base_url_prefixes", "llamacpp_providers", mode="before")
+    @classmethod
+    def _split_csv_list(cls, value: object) -> object:
+        if isinstance(value, str):
+            return [part.strip() for part in value.split(",") if part.strip()]
+        return value
 
 
 settings = Settings()

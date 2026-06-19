@@ -44,8 +44,11 @@ services:
       LOG_LEVEL: "INFO"
       EMBEDDING_ROUTING_ENABLED: "true"
       UPSTREAM_QUEUE_ENABLED: "true"
+      UPSTREAM_TIMEOUT: 1200.0
       EMBEDDING_BLEND_WEIGHT: 0.25
       COMPLEXITY_ROUTING_ENABLED: "true"
+      LLAMACPP_MAX_TOOLS: "8"
+      LLAMACPP_TOOL_LIMIT_MODE: "reject"
     ports:
       - "8001:8000"
     depends_on:

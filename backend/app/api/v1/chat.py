@@ -7,7 +7,8 @@ import uuid
 from datetime import datetime
 
 import httpx
-from fastapi import APIRouter, Depends, HTTPException, Request
+from fastapi import APIRouter, Depends, Request
+from fastapi.responses import JSONResponse
 from sse_starlette.sse import EventSourceResponse
 
 from app.core.config import settings
@@ -30,6 +31,12 @@ from app.services.router_service import (
     store_prompt_debug,
 )
 from app.services.upstream_queue import upstream_queue_manager
+from app.services.llamacpp_tools import prepare_llamacpp_upstream_payload
+from app.services.upstream_errors import (
+    openai_error_body,
+    upstream_error_from_response,
+    upstream_error_message,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -61,7 +68,15 @@ async def chat_completions(
     if not model_obj:
         model_obj = await get_model_by_id(db, settings.default_model)
     if not model_obj:
-        raise HTTPException(status_code=503, detail="No models configured")
+        return JSONResponse(
+            status_code=503,
+            content=openai_error_body(
+                "No models configured",
+                status_code=503,
+                error_type="server_error",
+                code="service_unavailable",
+            ),
+        )
 
     base_url = model_obj.base_url or f"https://api.openai.com/v1"
     api_key = model_obj.api_key_encrypted or ""
@@ -104,6 +119,22 @@ async def chat_completions(
         payload["tool_choice"] = chat_req.tool_choice
     if chat_req.stream:
         payload["stream_options"] = {"include_usage": True}
+
+    tool_limit = prepare_llamacpp_upstream_payload(
+        payload, base_url, model_obj.provider,
+    )
+    if tool_limit.rejected and tool_limit.error_body:
+        error_detail = upstream_error_message(tool_limit.error_body)
+        logger.error("Request %s rejected before upstream: %s", request_id, error_detail)
+        await log_request(
+            db, request_id, model_id,
+            prompt_tokens=0, completion_tokens=0,
+            latency_ms=0.0, cost=0.0,
+            is_error=True, error_message=error_detail,
+            model_used=model_id,
+        )
+        return JSONResponse(status_code=400, content=tool_limit.error_body)
+    payload = tool_limit.payload
 
     headers = {
         "Content-Type": "application/json",
@@ -167,9 +198,9 @@ async def _handle_non_stream_inner(
             elapsed = (time.monotonic() - start_time) * 1000
 
             if resp.status_code != 200:
-                error_detail = f"Upstream returned {resp.status_code}: {resp.text[:500]}"
+                error_body = upstream_error_from_response(resp.status_code, resp.text)
+                error_detail = upstream_error_message(error_body)
                 logger.error("Request %s: %s", request_id, error_detail)
-                prompt_tokens = payload.get("messages", [])
                 await log_request(
                     db, request_id, model_id,
                     prompt_tokens=0, completion_tokens=0,
@@ -177,7 +208,7 @@ async def _handle_non_stream_inner(
                     is_error=True, error_message=error_detail,
                     model_used=model_id,
                 )
-                raise HTTPException(status_code=resp.status_code, detail=error_detail)
+                return JSONResponse(status_code=resp.status_code, content=error_body)
 
             upstream_data = resp.json()
 
@@ -247,7 +278,15 @@ async def _handle_non_stream_inner(
             is_error=True, error_message="Upstream timeout",
             model_used=model_id,
         )
-        raise HTTPException(status_code=504, detail="Upstream request timed out")
+        return JSONResponse(
+            status_code=504,
+            content=openai_error_body(
+                "Upstream request timed out",
+                status_code=504,
+                error_type="server_error",
+                code="upstream_timeout",
+            ),
+        )
     except httpx.RequestError as exc:
         elapsed = (time.monotonic() - start_time) * 1000
         await log_request(
@@ -257,7 +296,15 @@ async def _handle_non_stream_inner(
             is_error=True, error_message=f"Request error: {exc}",
             model_used=model_id,
         )
-        raise HTTPException(status_code=502, detail=f"Upstream connection error: {exc}")
+        return JSONResponse(
+            status_code=502,
+            content=openai_error_body(
+                f"Upstream connection error: {exc}",
+                status_code=502,
+                error_type="server_error",
+                code="upstream_connection_error",
+            ),
+        )
 
 
 async def _handle_stream(
@@ -312,9 +359,13 @@ async def _iter_stream_events(
             async with client.stream("POST", upstream_url, json=payload, headers=headers) as resp:
                 if resp.status_code != 200:
                     error_text = await resp.aread()
-                    error_detail = f"Upstream returned {resp.status_code}: {error_text[:500].decode()}"
+                    error_body = upstream_error_from_response(
+                        resp.status_code,
+                        error_text.decode(errors="replace"),
+                    )
+                    error_detail = upstream_error_message(error_body)
                     logger.error("Stream request %s: %s", request_id, error_detail)
-                    yield {"event": "error", "data": json.dumps({"error": error_detail})}
+                    yield {"data": json.dumps(error_body)}
                     elapsed = (time.monotonic() - start_time) * 1000
                     await log_request(
                         db, request_id, model_id,
@@ -391,4 +442,11 @@ async def _iter_stream_events(
                 )
     except Exception as exc:
         logger.exception("Stream error for request %s", request_id)
-        yield {"event": "error", "data": json.dumps({"error": str(exc)})}
+        yield {
+            "data": json.dumps(openai_error_body(
+                str(exc),
+                status_code=500,
+                error_type="server_error",
+                code="stream_error",
+            )),
+        }

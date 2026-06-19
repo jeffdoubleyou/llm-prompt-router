@@ -209,6 +209,10 @@ To train: `python -m ml.train` (see [ML classifier guide](docs/ml-classifier-tra
 | `EMBEDDING_MODEL_NAME`      | `sentence-transformers/all-MiniLM-L6-v2`            | Local embedding model                             |
 | `UPSTREAM_QUEUE_ENABLED`    | `false`                                             | FIFO queue per upstream base URL (llama.cpp)      |
 | `COMPLEXITY_ROUTING_ENABLED`| `false`                                             | Filter by max_complexity_score before speed/cost  |
+| `LLAMACPP_MAX_TOOLS`        | `20`                                                | Max tools for llama.cpp (`0` = no limit)          |
+| `LLAMACPP_TOOL_LIMIT_MODE`  | `reject`                                            | `reject` (400 to client) or `truncate`            |
+| `LLAMACPP_BASE_URL_PREFIXES`| (empty)                                             | Comma-separated URL prefixes for tool limiting    |
+| `LLAMACPP_PROVIDERS`        | `custom,llama,ollama,llamacpp`                      | Providers treated as llama.cpp when prefixes empty |
 | `WORKER_CONCURRENCY`        | `4`                                                 | ML worker count                                   |
 | `UPSTREAM_TIMEOUT`          | `120.0`                                             | Upstream API timeout (seconds)                    |
 | `DEFAULT_MODEL`             | `gpt-4o-mini`                                       | Fallback model                                    |
