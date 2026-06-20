@@ -1,9 +1,12 @@
 from __future__ import annotations
 
+import json
 import logging
 import re
 import uuid
+from dataclasses import dataclass
 from datetime import datetime
+from typing import Any
 
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -56,6 +59,128 @@ def estimate_token_count(text: str) -> int:
         return len(enc.encode(text))
     except Exception:
         return len(text) // 4
+
+
+CHAT_TEMPLATE_BASE_OVERHEAD = 3
+CHAT_TEMPLATE_TOKENS_PER_MESSAGE = 4
+DEFAULT_OUTPUT_TOKEN_RESERVE = 4096
+
+
+@dataclass(frozen=True)
+class PromptTokenEstimate:
+    message_tokens: int
+    tool_call_tokens: int
+    tools_tokens: int
+    template_overhead: int
+
+    @property
+    def prompt_tokens(self) -> int:
+        return (
+            self.message_tokens
+            + self.tool_call_tokens
+            + self.tools_tokens
+            + self.template_overhead
+        )
+
+    def to_dict(self) -> dict[str, int]:
+        return {
+            "message_tokens": self.message_tokens,
+            "tool_call_tokens": self.tool_call_tokens,
+            "tools_tokens": self.tools_tokens,
+            "template_overhead": self.template_overhead,
+            "prompt_tokens": self.prompt_tokens,
+        }
+
+
+def _output_token_reserve(max_tokens: int | None, model: Model | None) -> int:
+    if max_tokens is not None:
+        return max(0, max_tokens)
+    if model is not None and model.max_tokens:
+        return model.max_tokens
+    return DEFAULT_OUTPUT_TOKEN_RESERVE
+
+
+def _messages_tool_calls_to_text(messages: list[dict]) -> str:
+    parts: list[str] = []
+    for message in messages:
+        for tool_call in message.get("tool_calls") or []:
+            if not isinstance(tool_call, dict):
+                continue
+            fn = tool_call.get("function")
+            if isinstance(fn, dict):
+                name = fn.get("name")
+                if name:
+                    parts.append(str(name))
+                arguments = fn.get("arguments")
+                if arguments:
+                    parts.append(str(arguments))
+            call_id = tool_call.get("id")
+            if call_id:
+                parts.append(str(call_id))
+
+        function_call = message.get("function_call")
+        if isinstance(function_call, dict):
+            name = function_call.get("name")
+            if name:
+                parts.append(str(name))
+            arguments = function_call.get("arguments")
+            if arguments:
+                parts.append(str(arguments))
+
+        name = message.get("name")
+        if name:
+            parts.append(str(name))
+        tool_call_id = message.get("tool_call_id")
+        if tool_call_id:
+            parts.append(str(tool_call_id))
+    return " ".join(parts)
+
+
+def _tools_to_text(tools: list[Any] | None) -> str:
+    if not tools:
+        return ""
+    return json.dumps(tools, separators=(",", ":"), ensure_ascii=False, sort_keys=True)
+
+
+def estimate_prompt_tokens(
+    messages: list[dict],
+    *,
+    tools: list[Any] | None = None,
+) -> PromptTokenEstimate:
+    """Estimate upstream prompt tokens including tools and chat-template overhead."""
+    message_tokens = estimate_token_count(_messages_to_text(messages))
+    tool_call_tokens = estimate_token_count(_messages_tool_calls_to_text(messages))
+    tools_tokens = estimate_token_count(_tools_to_text(tools))
+    template_overhead = (
+        CHAT_TEMPLATE_BASE_OVERHEAD
+        + len(messages) * CHAT_TEMPLATE_TOKENS_PER_MESSAGE
+    )
+    return PromptTokenEstimate(
+        message_tokens=message_tokens,
+        tool_call_tokens=tool_call_tokens,
+        tools_tokens=tools_tokens,
+        template_overhead=template_overhead,
+    )
+
+
+def _context_tokens_needed(
+    prompt_tokens: int,
+    model: Model,
+    *,
+    max_tokens: int | None = None,
+) -> int:
+    return prompt_tokens + _output_token_reserve(max_tokens, model)
+
+
+def _prompt_exceeds_context_window(
+    prompt_tokens: int,
+    model: Model,
+    *,
+    max_tokens: int | None = None,
+) -> bool:
+    return _context_tokens_needed(
+        prompt_tokens, model, max_tokens=max_tokens,
+    ) > model.context_window
 
 
 def parse_usage_from_response(data: dict) -> tuple[int, int]:
@@ -352,7 +477,11 @@ def _complexity_confidence(model: Model, difficulty: float) -> float:
     return 0.5
 
 
-def extract_features(messages: list[dict]) -> PromptFeatures:
+def extract_features(
+    messages: list[dict],
+    *,
+    tools: list[Any] | None = None,
+) -> PromptFeatures:
     full_text = _messages_to_text(messages)
     text_lower = full_text.lower()
 
@@ -364,7 +493,8 @@ def extract_features(messages: list[dict]) -> PromptFeatures:
         m.get("tool_call_id") for m in messages
     )
 
-    token_count = estimate_token_count(full_text)
+    token_estimate = estimate_prompt_tokens(messages, tools=tools)
+    token_count = token_estimate.prompt_tokens
 
     dominant_lang = _detect_dominant_language(text_lower)
 
@@ -468,6 +598,7 @@ def _filter_eligible_models(
     models: list[Model],
     *,
     request_has_tools: bool = False,
+    max_tokens: int | None = None,
 ) -> list[Model]:
     """Hard capability/context filter applied before rule or complexity ranking."""
     needs_tools = _needs_tool_support(features, request_has_tools=request_has_tools)
@@ -485,7 +616,9 @@ def _filter_eligible_models(
             and ModelCapability.function_calling.value not in caps
         ):
             continue
-        if features.token_count > model.context_window:
+        if _prompt_exceeds_context_window(
+            features.token_count, model, max_tokens=max_tokens,
+        ):
             continue
 
         eligible.append(model)
@@ -546,6 +679,7 @@ def select_routing_model(
     models: list[Model],
     *,
     request_has_tools: bool = False,
+    max_tokens: int | None = None,
 ) -> tuple[Model | None, float, str]:
     """Route to the fastest, then cheapest model that meets minimum requirements.
 
@@ -555,7 +689,9 @@ def select_routing_model(
     ``max_complexity_score`` before speed/cost ranking is applied.
     """
     eligible = _filter_eligible_models(
-        features, models, request_has_tools=request_has_tools,
+        features, models,
+        request_has_tools=request_has_tools,
+        max_tokens=max_tokens,
     )
     if not eligible:
         return None, 0.0, "default"
@@ -597,9 +733,12 @@ def match_model_by_rules(
     models: list[Model],
     *,
     request_has_tools: bool = False,
+    max_tokens: int | None = None,
 ) -> tuple[Model | None, float]:
     eligible = _filter_eligible_models(
-        features, models, request_has_tools=request_has_tools,
+        features, models,
+        request_has_tools=request_has_tools,
+        max_tokens=max_tokens,
     )
     return _pick_best_by_rules(features, eligible, request_has_tools=request_has_tools)
 
@@ -651,14 +790,21 @@ async def store_prompt_debug(
     model_id: str | None,
     messages: list[dict],
     features: PromptFeatures,
+    *,
+    tools: list[Any] | None = None,
+    max_tokens: int | None = None,
     queue: RedisQueue = redis_queue,
 ) -> None:
     try:
+        token_estimate = estimate_prompt_tokens(messages, tools=tools)
+        token_breakdown = token_estimate.to_dict()
+        token_breakdown["output_reserve_default"] = _output_token_reserve(max_tokens, None)
         entry = {
             "request_id": request_id,
             "model_id": model_id,
             "messages": _sanitize_for_debug_storage(messages),
             "features": features.model_dump(),
+            "token_estimate": token_breakdown,
             "image_detection": analyze_images(messages),
             "created_at": datetime.utcnow().isoformat(),
         }
@@ -673,7 +819,7 @@ async def classify_and_route(
     queue: RedisQueue = redis_queue,
 ) -> str | None:
     messages_dicts = [m.model_dump(exclude_none=True) for m in request.messages]
-    features = extract_features(messages_dicts)
+    features = extract_features(messages_dicts, tools=request.tools)
 
     result = await db.execute(select(Model).where(Model.is_active == True))
     models = list(result.scalars().all())
@@ -688,7 +834,10 @@ async def classify_and_route(
 
     request_has_tools = bool(request.tools)
     matched_model, confidence, routing_method = select_routing_model(
-        features, models, request_has_tools=request_has_tools,
+        features,
+        models,
+        request_has_tools=request_has_tools,
+        max_tokens=request.max_tokens,
     )
 
     if matched_model:
@@ -784,11 +933,14 @@ def _evaluate_models_for_routing(
     routing_difficulty: float,
     *,
     request_has_tools: bool = False,
+    max_tokens: int | None = None,
 ) -> list[dict]:
     """Document which models pass/fail capability and complexity checks."""
     eligible_ids = {
         m.id for m in _filter_eligible_models(
-            features, models, request_has_tools=request_has_tools,
+            features, models,
+            request_has_tools=request_has_tools,
+            max_tokens=max_tokens,
         )
     }
     needs_tools = _needs_tool_support(features, request_has_tools=request_has_tools)
@@ -815,9 +967,15 @@ def _evaluate_models_for_routing(
             and ModelCapability.function_calling.value not in caps
         ):
             reasons.append("missing tool_calling capability")
-        if features.token_count > model.context_window:
+        if _prompt_exceeds_context_window(
+            features.token_count, model, max_tokens=max_tokens,
+        ):
+            output_reserve = _output_token_reserve(max_tokens, model)
+            context_needed = features.token_count + output_reserve
             reasons.append(
-                f"token_count {features.token_count} > context_window {model.context_window}"
+                f"context needed {context_needed} "
+                f"(prompt {features.token_count} + output {output_reserve}) "
+                f"> context_window {model.context_window}"
             )
 
         max_cx = model.max_complexity_score
@@ -857,7 +1015,7 @@ async def explain_routing(
     from app.services.prompt_complexity import build_complexity_explanation, get_routing_difficulty
 
     messages_dicts = [m.model_dump(exclude_none=True) for m in request.messages]
-    features = extract_features(messages_dicts)
+    features = extract_features(messages_dicts, tools=request.tools)
     full_text = _messages_to_text(messages_dicts)
 
     routing_difficulty = get_routing_difficulty(
@@ -894,9 +1052,13 @@ async def explain_routing(
             "rule_candidate": None,
         }
 
+    request_has_tools = bool(request.tools)
+    max_tokens = request.max_tokens
+
     evaluations = _evaluate_models_for_routing(
         features, models, routing_difficulty,
-        request_has_tools=bool(request.tools),
+        request_has_tools=request_has_tools,
+        max_tokens=max_tokens,
     )
 
     matched_model = None
@@ -906,19 +1068,28 @@ async def explain_routing(
     rule_candidate = None
 
     selected, confidence, routing_method = select_routing_model(
-        features, models, request_has_tools=bool(request.tools),
+        features,
+        models,
+        request_has_tools=request_has_tools,
+        max_tokens=max_tokens,
     )
     matched_model = selected
 
     rule_model, rule_confidence = match_model_by_rules(
-        features, models, request_has_tools=bool(request.tools),
+        features,
+        models,
+        request_has_tools=request_has_tools,
+        max_tokens=max_tokens,
     )
     if rule_model:
         rule_candidate = rule_model.id
 
     if settings.complexity_routing_enabled:
         eligible = _filter_eligible_models(
-            features, models, request_has_tools=bool(request.tools),
+            features,
+            models,
+            request_has_tools=request_has_tools,
+            max_tokens=max_tokens,
         )
         rule_scores = {
             m.id: _compute_rule_score(

@@ -58,11 +58,18 @@ async def chat_completions(
 ):
     request_id = str(uuid.uuid4())
     messages_dicts = [m.model_dump(exclude_none=True) for m in chat_req.messages]
-    features = extract_features(messages_dicts)
+    features = extract_features(messages_dicts, tools=chat_req.tools)
 
     model_id = await classify_and_route(chat_req, db)
 
-    await store_prompt_debug(request_id, model_id, messages_dicts, features)
+    await store_prompt_debug(
+        request_id,
+        model_id,
+        messages_dicts,
+        features,
+        tools=chat_req.tools,
+        max_tokens=chat_req.max_tokens,
+    )
 
     model_obj = await get_model_by_id(db, model_id)
     if not model_obj:

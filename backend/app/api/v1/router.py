@@ -274,7 +274,14 @@ async def get_debug_prompts(
 @router.post("/api/v1/debug/route", response_model=DebugRouteResponse)
 async def debug_route(body: DebugRouteRequest, db=Depends(get_db)):
     """Dry-run routing: extract features and pick a model without calling upstream."""
-    result = await explain_routing(ChatCompletionRequest(messages=body.messages), db)
+    result = await explain_routing(
+        ChatCompletionRequest(
+            messages=body.messages,
+            tools=body.tools,
+            max_tokens=body.max_tokens,
+        ),
+        db,
+    )
     return DebugRouteResponse(
         model_id=result["model_id"],
         routing_difficulty=result["routing_difficulty"],
@@ -285,7 +292,14 @@ async def debug_route(body: DebugRouteRequest, db=Depends(get_db)):
 @router.post("/api/v1/debug/complexity", response_model=DebugComplexityResponse)
 async def debug_complexity(body: DebugRouteRequest, db=Depends(get_db)):
     """Full complexity and routing breakdown without calling upstream."""
-    result = await explain_routing(ChatCompletionRequest(messages=body.messages), db)
+    result = await explain_routing(
+        ChatCompletionRequest(
+            messages=body.messages,
+            tools=body.tools,
+            max_tokens=body.max_tokens,
+        ),
+        db,
+    )
     return DebugComplexityResponse(
         model_id=result["model_id"],
         routing_method=result["routing_method"],

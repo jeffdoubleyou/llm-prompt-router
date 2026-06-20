@@ -271,6 +271,8 @@ class PromptDebugEntry(BaseModel):
 
 class DebugRouteRequest(BaseModel):
     messages: list[ChatMessage]
+    tools: list[dict] | None = None
+    max_tokens: int | None = None
 
 
 class DebugRouteResponse(BaseModel):
