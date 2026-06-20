@@ -287,6 +287,71 @@ def _compute_complexity_score(features: PromptFeatures) -> float:
     )
 
 
+def _matching_difficulty(features: PromptFeatures) -> float:
+    """Difficulty compared against model ``max_complexity_score``.
+
+    Uses ``task_difficulty`` only (not requirement_load). Requirement load is
+    reflected in the composite score for logging but should not bump a prompt
+    from a 0.9-capable model to a fallback tier when task difficulty is 0.86.
+    """
+    if features.task_difficulty > 0:
+        return min(features.task_difficulty, 1.0)
+    return _compute_legacy_complexity_score(features)
+
+
+def _models_sufficient_for_difficulty(
+    models: list[Model],
+    difficulty: float,
+) -> list[Model]:
+    """Models whose max_complexity_score can handle ``difficulty``."""
+    sufficient: list[Model] = []
+    for model in models:
+        if not model.is_active:
+            continue
+        max_cx = model.max_complexity_score
+        if max_cx is None or difficulty <= max_cx:
+            sufficient.append(model)
+    return sufficient
+
+
+def _pick_from_smallest_capacity_tier(models: list[Model]) -> Model | None:
+    """Among models, pick the smallest max_complexity tier; tie-break on speed."""
+    if not models:
+        return None
+    scored = [m for m in models if m.max_complexity_score is not None]
+    if not scored:
+        return _pick_fastest_cheapest(models)
+    min_cx = min(m.max_complexity_score for m in scored)
+    tier = [m for m in scored if m.max_complexity_score == min_cx]
+    return _pick_fastest_cheapest(tier)
+
+
+def _pick_highest_capacity_model(models: list[Model]) -> Model | None:
+    """Best-effort pick when no model fully covers difficulty (highest max_complexity)."""
+    if not models:
+        return None
+    active = [m for m in models if m.is_active]
+    if not active:
+        return None
+    scored = [m for m in active if m.max_complexity_score is not None]
+    if not scored:
+        return _pick_fastest_cheapest(active)
+    max_cx = max(m.max_complexity_score for m in scored)
+    tier = [m for m in scored if m.max_complexity_score == max_cx]
+    return _pick_fastest_cheapest(tier)
+
+
+def _complexity_confidence(model: Model, difficulty: float) -> float:
+    max_cx = model.max_complexity_score
+    if max_cx is not None and max_cx > 0:
+        if difficulty <= max_cx:
+            capacity_ratio = (max_cx - difficulty) / max(0.01, max_cx)
+            return min(0.5 + capacity_ratio * 0.5, 1.0)
+        # Best-effort: model is the highest capacity available but still below difficulty.
+        return max(0.3, 0.5 - (difficulty - max_cx))
+    return 0.5
+
+
 def extract_features(messages: list[dict]) -> PromptFeatures:
     full_text = _messages_to_text(messages)
     text_lower = full_text.lower()
@@ -504,12 +569,19 @@ def select_routing_model(
 
     use_complexity = (
         settings.complexity_routing_enabled
-        and any(model.max_complexity_score is not None for model in top_tier)
+        and any(model.max_complexity_score is not None for model in eligible)
     )
     if use_complexity:
-        model, confidence = match_model_by_complexity(features, top_tier)
+        difficulty = _matching_difficulty(features)
+        for pool in (top_tier, eligible):
+            sufficient = _models_sufficient_for_difficulty(pool, difficulty)
+            if sufficient:
+                model = _pick_from_smallest_capacity_tier(sufficient)
+                if model:
+                    return model, _complexity_confidence(model, difficulty), "complexity"
+        model = _pick_highest_capacity_model(eligible)
         if model:
-            return model, confidence, "complexity"
+            return model, _complexity_confidence(model, difficulty), "complexity"
 
     best_model = _pick_fastest_cheapest(top_tier)
     if not best_model:
@@ -536,39 +608,25 @@ def match_model_by_complexity(
     features: PromptFeatures,
     models: list[Model],
 ) -> tuple[Model | None, float]:
-    """Pick the fastest/cheapest model that can handle prompt complexity.
+    """Pick the smallest sufficient model for prompt task difficulty.
 
     Only used when ``settings.complexity_routing_enabled`` is true.
     Callers should pass models already filtered by ``_filter_eligible_models``.
     """
-    complexity = _compute_complexity_score(features)
-    capable: list[Model] = []
-
-    for model in models:
-        if not model.is_active:
-            continue
-
-        max_cx = model.max_complexity_score
-        if max_cx is not None and complexity > max_cx:
-            continue
-
-        capable.append(model)
-
-    if not capable:
+    if not models:
         return None, 0.0
 
-    best_model = _pick_fastest_cheapest(capable)
+    difficulty = _matching_difficulty(features)
+    sufficient = _models_sufficient_for_difficulty(models, difficulty)
+    if sufficient:
+        best_model = _pick_from_smallest_capacity_tier(sufficient)
+    else:
+        best_model = _pick_highest_capacity_model(models)
+
     if not best_model:
         return None, 0.0
 
-    max_cx = best_model.max_complexity_score
-    if max_cx is not None:
-        capacity_ratio = (max_cx - complexity) / max(0.01, max_cx)
-        confidence = min(0.5 + capacity_ratio * 0.5, 1.0)
-    else:
-        confidence = 0.5
-
-    return best_model, confidence
+    return best_model, _complexity_confidence(best_model, difficulty)
 
 
 def _sanitize_for_debug_storage(value: object, max_str_len: int = 2000) -> object:
@@ -767,15 +825,16 @@ def _evaluate_models_for_routing(
             features, model, request_has_tools=request_has_tools,
         )
 
+        matching_difficulty = _matching_difficulty(features)
         eligible = model.id in eligible_ids
         if (
             eligible
             and settings.complexity_routing_enabled
             and max_cx is not None
-            and routing_difficulty > max_cx
+            and matching_difficulty > max_cx
         ):
             reasons.append(
-                f"routing_difficulty {routing_difficulty:.3f} > max_complexity_score {max_cx:.3f}"
+                f"task_difficulty {matching_difficulty:.3f} > max_complexity_score {max_cx:.3f}"
             )
             eligible = False
         evaluations.append({

@@ -230,7 +230,7 @@ class TestMatchModelByComplexity:
         assert model is not None
         assert model.id == "capable-model"
 
-    def test_no_capable_model_returns_none(self):
+    def test_no_capable_model_returns_best_effort_highest_capacity(self):
         models = [
             _make_model(
                 model_id="weak-model",
@@ -239,8 +239,9 @@ class TestMatchModelByComplexity:
         ]
         features = PromptFeatures(token_count=10000, reasoning_complexity=1.0)
         model, confidence = match_model_by_complexity(features, models)
-        assert model is None
-        assert confidence == 0.0
+        assert model is not None
+        assert model.id == "weak-model"
+        assert confidence > 0.0
 
     def test_inactive_model_excluded(self):
         models = [
@@ -389,7 +390,7 @@ class TestMatchModelByComplexity:
         assert method == "rules"
 
     def test_no_complexity_metadata_still_eligible(self):
-        """Models without max_complexity_score remain eligible when complexity routing filters."""
+        """Models without max_complexity_score are used when no scored model is sufficient."""
         models = [
             _make_model(
                 model_id="no-metadata",
@@ -406,7 +407,7 @@ class TestMatchModelByComplexity:
                 estimated_tokens_per_second=20.0,
             ),
         ]
-        features = PromptFeatures(token_count=100)
+        features = PromptFeatures(task_difficulty=0.8)
         model, _ = match_model_by_complexity(features, models)
         assert model is not None
         assert model.id == "no-metadata"
@@ -434,8 +435,8 @@ class TestMatchModelByComplexity:
         assert model is not None
         assert model.id == "fast"
 
-    def test_zero_cost_prefers_fastest_capable_model(self):
-        """Local models with $0 cost should prefer the fastest capable model."""
+    def test_zero_cost_prefers_smallest_sufficient_model(self):
+        """Among models that cover difficulty, prefer the smallest sufficient tier."""
         models = [
             _make_model(
                 model_id="small",
@@ -455,7 +456,7 @@ class TestMatchModelByComplexity:
         features = PromptFeatures(task_difficulty=0.58, requirement_load=0.0)
         model, _ = match_model_by_complexity(features, models)
         assert model is not None
-        assert model.id == "large"
+        assert model.id == "small"
 
     def test_tool_call_capability_required(self):
         """Tool call prompts should skip models without tool_calling capability."""
@@ -485,6 +486,101 @@ class TestMatchModelByComplexity:
         model, confidence = match_model_by_complexity(features, models)
         assert model is None
         assert confidence == 0.0
+
+    def test_high_code_edit_routes_to_coding_not_fast_small_model(self, monkeypatch):
+        """Regression: 0.86 task difficulty must not fall back to max 0.5 gemma 4B."""
+        monkeypatch.setattr(settings, "complexity_routing_enabled", True)
+        caps = [
+            "text", "tool_calling", "function_calling", "streaming",
+            "reasoning", "code", "long_context", "vision",
+        ]
+        models = [
+            _make_model(
+                model_id="unsloth/Qwen3.6-35B-A3B-MTP-GGUF:IQ4_XS_coding",
+                capabilities=caps,
+                priority=3,
+                max_complexity_score=0.9,
+                estimated_tokens_per_second=30.0,
+                context_window=400000,
+            ),
+            _make_model(
+                model_id="unsloth/Qwen3.6-35B-A3B-MTP-GGUF:IQ4_XS",
+                capabilities=caps,
+                priority=3,
+                max_complexity_score=0.82,
+                estimated_tokens_per_second=30.0,
+                context_window=400000,
+            ),
+            _make_model(
+                model_id="unsloth/gemma-4-E4B-it-qat-GGUF:UD-Q4_K_XL",
+                capabilities=caps,
+                priority=3,
+                max_complexity_score=0.5,
+                estimated_tokens_per_second=60.0,
+                context_window=128000,
+            ),
+            _make_model(
+                model_id="unsloth/Qwen3.6-27B-MTP-GGUF:Q4_K_S",
+                capabilities=[c for c in caps if c != "vision"],
+                priority=2,
+                max_complexity_score=1.0,
+                estimated_tokens_per_second=7.0,
+                context_window=400000,
+            ),
+        ]
+        features = PromptFeatures(
+            task_difficulty=0.86,
+            requirement_load=0.34,
+            task_type="code_edit",
+            token_count=29128,
+            has_tool_calls=True,
+            has_code_blocks=True,
+            has_images=False,
+            dominant_language="code",
+        )
+        model, _, method = select_routing_model(features, models, request_has_tools=True)
+        assert model is not None
+        assert model.id == "unsloth/Qwen3.6-35B-A3B-MTP-GGUF:IQ4_XS_coding"
+        assert method == "complexity"
+
+    def test_complexity_fallback_escalates_to_highest_capacity(self, monkeypatch):
+        """When no model covers difficulty, pick highest max_complexity (not fastest)."""
+        monkeypatch.setattr(settings, "complexity_routing_enabled", True)
+        caps = [
+            "text", "vision", "tool_calling", "function_calling", "streaming",
+            "reasoning", "code", "long_context",
+        ]
+        models = [
+            _make_model(
+                model_id="unsloth/gemma-4-E4B-it-qat-GGUF:UD-Q4_K_XL",
+                capabilities=caps,
+                priority=3,
+                max_complexity_score=0.5,
+                estimated_tokens_per_second=60.0,
+                context_window=128000,
+            ),
+            _make_model(
+                model_id="unsloth/Qwen3.6-35B-A3B-MTP-GGUF:IQ4_XS_coding",
+                capabilities=caps,
+                priority=3,
+                max_complexity_score=0.9,
+                estimated_tokens_per_second=30.0,
+                context_window=400000,
+            ),
+        ]
+        features = PromptFeatures(
+            task_difficulty=0.95,
+            requirement_load=0.26,
+            task_type="debug",
+            has_images=True,
+            has_tool_calls=True,
+            has_code_blocks=True,
+            token_count=26563,
+        )
+        model, _, method = select_routing_model(features, models, request_has_tools=True)
+        assert model is not None
+        assert model.id == "unsloth/Qwen3.6-35B-A3B-MTP-GGUF:IQ4_XS_coding"
+        assert method == "complexity"
 
 
 # ---------------------------------------------------------------------------
