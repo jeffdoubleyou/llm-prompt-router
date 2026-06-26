@@ -14,6 +14,7 @@ import {
 } from "recharts";
 import { fetchMetricsSummary, fetchTimeSeries } from "../lib/api";
 import { formatLatencySeconds, msToSeconds } from "../lib/format";
+import { formatChartAxisTime } from "../lib/formatTime";
 
 export default function Metrics() {
   const [period, setPeriod] = useState(60);
@@ -90,10 +91,7 @@ export default function Metrics() {
               <XAxis
                 dataKey="timestamp"
                 tick={{ fill: "#9ca3af", fontSize: 11 }}
-                tickFormatter={(v) => {
-                  const d = new Date(v);
-                  return `${d.getHours().toString().padStart(2, "0")}:${d.getMinutes().toString().padStart(2, "0")}`;
-                }}
+                tickFormatter={(v) => formatChartAxisTime(v)}
               />
               <YAxis tick={{ fill: "#9ca3af", fontSize: 11 }} />
               <Tooltip
@@ -119,10 +117,7 @@ export default function Metrics() {
               <XAxis
                 dataKey="timestamp"
                 tick={{ fill: "#9ca3af", fontSize: 11 }}
-                tickFormatter={(v) => {
-                  const d = new Date(v);
-                  return `${d.getHours().toString().padStart(2, "0")}:${d.getMinutes().toString().padStart(2, "0")}`;
-                }}
+                tickFormatter={(v) => formatChartAxisTime(v)}
               />
               <YAxis
                 tick={{ fill: "#9ca3af", fontSize: 11 }}
@@ -162,10 +157,7 @@ export default function Metrics() {
               <XAxis
                 dataKey="timestamp"
                 tick={{ fill: "#9ca3af", fontSize: 11 }}
-                tickFormatter={(v) => {
-                  const d = new Date(v);
-                  return `${d.getHours().toString().padStart(2, "0")}:${d.getMinutes().toString().padStart(2, "0")}`;
-                }}
+                tickFormatter={(v) => formatChartAxisTime(v)}
               />
               <YAxis tick={{ fill: "#9ca3af", fontSize: 11 }} />
               <Tooltip
@@ -191,10 +183,7 @@ export default function Metrics() {
               <XAxis
                 dataKey="timestamp"
                 tick={{ fill: "#9ca3af", fontSize: 11 }}
-                tickFormatter={(v) => {
-                  const d = new Date(v);
-                  return `${d.getHours().toString().padStart(2, "0")}:${d.getMinutes().toString().padStart(2, "0")}`;
-                }}
+                tickFormatter={(v) => formatChartAxisTime(v)}
               />
               <YAxis tick={{ fill: "#9ca3af", fontSize: 11 }} />
               <Tooltip

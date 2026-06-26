@@ -9,6 +9,7 @@ import {
 } from "lucide-react";
 import { fetchLogs, RequestLogEntry } from "../lib/api";
 import { formatLatencySeconds } from "../lib/format";
+import { formatLocalDateTime } from "../lib/formatTime";
 
 export default function Logs() {
   const [page, setPage] = useState(0);
@@ -130,9 +131,7 @@ export default function Logs() {
                     )}
                   </td>
                   <td className="py-3 px-4 text-xs text-gray-500">
-                    {log.created_at
-                      ? new Date(log.created_at).toLocaleString()
-                      : "-"}
+                    {formatLocalDateTime(log.created_at, "-")}
                   </td>
                 </tr>
               ))}
@@ -221,7 +220,7 @@ function renderExpandedRow(logs: RequestLogEntry[], id: string) {
         </div>
         <div>
           <span className="text-gray-500">Created: </span>
-          <span>{log.created_at ? new Date(log.created_at).toLocaleString() : "—"}</span>
+          <span>{formatLocalDateTime(log.created_at)}</span>
         </div>
       </div>
       {log.error_message && (

@@ -17,6 +17,7 @@ import Classifier from "./pages/Classifier";
 import Queue from "./pages/Queue";
 import Prompts from "./pages/Prompts";
 import Complexity from "./pages/Complexity";
+import LocalTimeClock from "./components/LocalTimeClock";
 
 const navItems = [
   { to: "/", label: "Dashboard", icon: LayoutDashboard },
@@ -58,8 +59,9 @@ export default function App() {
             </NavLink>
           ))}
         </nav>
-        <div className="p-3 border-t border-gray-800 text-xs text-gray-600">
-          v1.0.0
+        <div className="p-3 border-t border-gray-800 text-xs">
+          <LocalTimeClock />
+          <div className="mt-2 text-gray-600">v1.0.0</div>
         </div>
       </aside>
       <main className="flex-1 overflow-auto">

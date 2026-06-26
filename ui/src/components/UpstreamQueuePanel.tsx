@@ -1,6 +1,7 @@
 import { useQuery } from "@tanstack/react-query";
 import { Layers, RefreshCw } from "lucide-react";
 import { fetchUpstreamQueueStatus } from "../lib/api";
+import { formatLocalTime } from "../lib/formatTime";
 
 interface Props {
   compact?: boolean;
@@ -167,7 +168,7 @@ export default function UpstreamQueuePanel({ compact = false }: Props) {
                             {w.request_id}
                           </td>
                           <td className="py-1.5 text-gray-500">
-                            {new Date(w.created_at).toLocaleTimeString()}
+                            {formatLocalTime(w.created_at)}
                           </td>
                         </tr>
                       ))}

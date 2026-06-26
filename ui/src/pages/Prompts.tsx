@@ -2,6 +2,7 @@ import { useMemo, useState } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { ChevronDown, ChevronUp, Bug, ImageIcon, Search } from "lucide-react";
 import { fetchDebugPrompts, ImageDetectionResult, PromptDebugEntry } from "../lib/api";
+import { formatLocalDateTime } from "../lib/formatTime";
 
 function promptMatchesSearch(entry: PromptDebugEntry, query: string): boolean {
   const haystack = [
@@ -350,9 +351,7 @@ function PromptRow({
         </td>
         <td className="py-3 px-4">{entry.model_id ?? "—"}</td>
         <td className="py-3 px-4 text-gray-400">
-          {entry.created_at
-            ? new Date(entry.created_at).toLocaleString()
-            : "—"}
+          {formatLocalDateTime(entry.created_at)}
         </td>
         <td className="py-3 px-4">
           <FeatureBadges features={entry.features} />

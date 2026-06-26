@@ -17,6 +17,7 @@ import {
   RefreshCw,
 } from "lucide-react";
 import { fetchClassifierStatus, fetchClassifierSamples, updateClassifierSample } from "../lib/api";
+import { formatLocalDate } from "../lib/formatTime";
 
 type Tab = "status" | "training-data";
 
@@ -91,10 +92,7 @@ function TrainingDataTab() {
     updateMutation.mutate({ sampleId, isCorrect: next });
   };
 
-  const formatDate = (dateStr: string | null) => {
-    if (!dateStr) return "N/A";
-    return new Date(dateStr).toLocaleDateString();
-  };
+  const formatDate = (dateStr: string | null) => formatLocalDate(dateStr, "N/A");
 
   if (error) {
     return (
@@ -338,7 +336,7 @@ function SampleRow({
           </button>
         </td>
         <td className="py-2 px-3 text-xs text-gray-500">
-          {sample.created_at ? new Date(sample.created_at).toLocaleDateString() : "N/A"}
+          {formatLocalDate(sample.created_at, "N/A")}
         </td>
       </tr>
       {isExpanded && (
@@ -403,7 +401,7 @@ export default function Classifier() {
     {
       label: "Last Trained",
       value: data?.last_trained_at
-        ? new Date(data.last_trained_at).toLocaleDateString()
+        ? formatLocalDate(data.last_trained_at, "Never")
         : "Never",
       icon: Clock,
       color: "text-yellow-400",

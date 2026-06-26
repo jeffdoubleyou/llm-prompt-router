@@ -22,6 +22,7 @@ import {
 import { useLiveMetrics } from "../hooks/useMetrics";
 import { fetchDashboardMetrics } from "../lib/api";
 import { formatLatencySeconds, msToSeconds } from "../lib/format";
+import { formatChartAxisHour, formatLocalTime } from "../lib/formatTime";
 import UpstreamQueuePanel from "../components/UpstreamQueuePanel";
 
 const formatNum = (n: number) =>
@@ -137,7 +138,7 @@ export default function Dashboard() {
               Real-Time Metrics
             </h3>
             <span className="text-xs text-gray-600">
-              {new Date(metric.timestamp).toLocaleTimeString()}
+              {formatLocalTime(metric.timestamp)}
             </span>
           </div>
           <div className="grid grid-cols-2 md:grid-cols-4 gap-4 text-sm">
@@ -180,10 +181,7 @@ export default function Dashboard() {
               <XAxis
                 dataKey="timestamp"
                 tick={{ fill: "#9ca3af", fontSize: 11 }}
-                tickFormatter={(v) => {
-                  const d = new Date(v);
-                  return `${d.getHours().toString().padStart(2, "0")}:00`;
-                }}
+                tickFormatter={(v) => formatChartAxisHour(v)}
               />
               <YAxis tick={{ fill: "#9ca3af", fontSize: 11 }} />
               <Tooltip
@@ -209,10 +207,7 @@ export default function Dashboard() {
               <XAxis
                 dataKey="timestamp"
                 tick={{ fill: "#9ca3af", fontSize: 11 }}
-                tickFormatter={(v) => {
-                  const d = new Date(v);
-                  return `${d.getHours().toString().padStart(2, "0")}:00`;
-                }}
+                tickFormatter={(v) => formatChartAxisHour(v)}
               />
               <YAxis
                 tick={{ fill: "#9ca3af", fontSize: 11 }}
