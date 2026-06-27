@@ -37,6 +37,8 @@ class ChatCompletionRequest(BaseModel):
     user: str | None = None
     tools: list[dict] | None = None
     tool_choice: str | dict | None = None
+    cache_prompt: bool | None = None
+    chat_template_kwargs: dict[str, Any] | None = None
 
 
 class Usage(BaseModel):

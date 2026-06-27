@@ -124,6 +124,10 @@ async def chat_completions(
         payload["tools"] = chat_req.tools
     if chat_req.tool_choice:
         payload["tool_choice"] = chat_req.tool_choice
+    if chat_req.cache_prompt is not None:
+        payload["cache_prompt"] = chat_req.cache_prompt
+    if chat_req.chat_template_kwargs is not None:
+        payload["chat_template_kwargs"] = chat_req.chat_template_kwargs
     if chat_req.stream:
         payload["stream_options"] = {"include_usage": True}
 

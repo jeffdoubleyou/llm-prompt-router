@@ -19,11 +19,30 @@ from app.services.upstream_errors import (
     upstream_error_from_response,
     upstream_error_message,
 )
+from app.core.models import ChatCompletionRequest, ChatMessage, Role
 from app.services.llamacpp_tools import (
     is_llamacpp_upstream,
     prepare_llamacpp_upstream_payload,
     tool_names_from_payload,
 )
+
+
+class TestChatCompletionRequestExtensions:
+    def test_parses_llamacpp_fields(self):
+        req = ChatCompletionRequest.model_validate({
+            "messages": [{"role": "user", "content": "hi"}],
+            "cache_prompt": True,
+            "chat_template_kwargs": {"enable_thinking": False},
+        })
+        assert req.cache_prompt is True
+        assert req.chat_template_kwargs == {"enable_thinking": False}
+
+    def test_llamacpp_fields_default_to_none(self):
+        req = ChatCompletionRequest(
+            messages=[ChatMessage(role=Role.user, content="hi")],
+        )
+        assert req.cache_prompt is None
+        assert req.chat_template_kwargs is None
 
 
 class TestUpstreamErrors:
