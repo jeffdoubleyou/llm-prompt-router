@@ -33,9 +33,11 @@ class TestChatCompletionRequestExtensions:
             "messages": [{"role": "user", "content": "hi"}],
             "cache_prompt": True,
             "chat_template_kwargs": {"enable_thinking": False},
+            "thinking_budget_tokens": 1024,
         })
         assert req.cache_prompt is True
         assert req.chat_template_kwargs == {"enable_thinking": False}
+        assert req.thinking_budget_tokens == 1024
 
     def test_llamacpp_fields_default_to_none(self):
         req = ChatCompletionRequest(
@@ -43,6 +45,7 @@ class TestChatCompletionRequestExtensions:
         )
         assert req.cache_prompt is None
         assert req.chat_template_kwargs is None
+        assert req.thinking_budget_tokens is None
 
 
 class TestUpstreamErrors:

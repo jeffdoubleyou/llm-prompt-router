@@ -128,6 +128,8 @@ async def chat_completions(
         payload["cache_prompt"] = chat_req.cache_prompt
     if chat_req.chat_template_kwargs is not None:
         payload["chat_template_kwargs"] = chat_req.chat_template_kwargs
+    if chat_req.thinking_budget_tokens is not None:
+        payload["thinking_budget_tokens"] = chat_req.thinking_budget_tokens
     if chat_req.stream:
         payload["stream_options"] = {"include_usage": True}
 

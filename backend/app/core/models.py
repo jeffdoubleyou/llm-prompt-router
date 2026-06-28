@@ -39,6 +39,7 @@ class ChatCompletionRequest(BaseModel):
     tool_choice: str | dict | None = None
     cache_prompt: bool | None = None
     chat_template_kwargs: dict[str, Any] | None = None
+    thinking_budget_tokens: int | None = None
 
 
 class Usage(BaseModel):
