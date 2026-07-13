@@ -20,6 +20,12 @@ from app.services.upstream_errors import (
     upstream_error_message,
 )
 from app.core.models import ChatCompletionRequest, ChatMessage, Role
+from app.models.db import Model
+from app.api.v1.chat import (
+    build_upstream_chat_payload,
+    omit_null_fields,
+    resolve_upstream_max_tokens,
+)
 from app.services.llamacpp_tools import (
     is_llamacpp_upstream,
     prepare_llamacpp_upstream_payload,
@@ -183,3 +189,76 @@ class TestLlamacppTools:
             payload, "http://127.0.0.1:8080/v1", "custom",
         )
         assert "bash, read" in caplog.text
+
+
+def _stub_model(**overrides) -> Model:
+    values = {
+        "id": "test-model",
+        "display_name": "test",
+        "provider": "custom",
+        "capabilities": ["text"],
+        "tags": [],
+        "cost_per_1k_input": 0.0,
+        "cost_per_1k_output": 0.0,
+        "max_tokens": 4096,
+        "context_window": 128000,
+        "rpm_limit": 60,
+        "tpm_limit": 100000,
+        "is_active": True,
+        "priority": 1,
+    }
+    values.update(overrides)
+    return Model(**values)
+
+
+class TestUpstreamPayloadSanitization:
+    def test_omit_null_fields(self):
+        assert omit_null_fields({"a": 1, "b": None, "c": False}) == {"a": 1, "c": False}
+
+    def test_resolve_max_tokens_from_request(self):
+        model = _stub_model(max_tokens=2048)
+        assert resolve_upstream_max_tokens(512, model) == 512
+
+    def test_resolve_max_tokens_falls_back_to_model(self):
+        model = _stub_model(max_tokens=2048)
+        assert resolve_upstream_max_tokens(None, model) == 2048
+
+    def test_resolve_max_tokens_default_when_model_unset(self):
+        model = _stub_model(max_tokens=0)
+        assert resolve_upstream_max_tokens(None, model) == 4096
+
+    def test_null_max_tokens_becomes_model_default(self):
+        """Regression: llama.cpp rejects max_tokens: null with type_error.302."""
+        model = _stub_model(max_tokens=4096)
+        req = ChatCompletionRequest.model_validate({
+            "messages": [{"role": "user", "content": "hi"}],
+            "max_tokens": None,
+            "stop": None,
+            "user": None,
+            "temperature": None,
+        })
+        payload = build_upstream_chat_payload(
+            model_id=model.id,
+            model_obj=model,
+            chat_req=req,
+            messages=[{"role": "user", "content": "hi"}],
+        )
+        assert payload["max_tokens"] == 4096
+        assert isinstance(payload["max_tokens"], int)
+        assert "stop" not in payload
+        assert "user" not in payload
+        assert "temperature" not in payload
+
+    def test_explicit_max_tokens_preserved(self):
+        model = _stub_model(max_tokens=4096)
+        req = ChatCompletionRequest(
+            messages=[ChatMessage(role=Role.user, content="hi")],
+            max_tokens=1024,
+        )
+        payload = build_upstream_chat_payload(
+            model_id=model.id,
+            model_obj=model,
+            chat_req=req,
+            messages=[{"role": "user", "content": "hi"}],
+        )
+        assert payload["max_tokens"] == 1024

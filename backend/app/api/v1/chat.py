@@ -42,12 +42,67 @@ logger = logging.getLogger(__name__)
 
 router = APIRouter(tags=["chat"])
 
+DEFAULT_MAX_TOKENS = 4096
+
 
 def _get_timeout(model_obj: Model) -> float:
     """Return the effective timeout for a model, falling back to the global setting."""
     if model_obj.timeout is not None:
         return model_obj.timeout
     return settings.upstream_timeout
+
+
+def resolve_upstream_max_tokens(
+    request_max_tokens: int | None,
+    model_obj: Model,
+) -> int:
+    """Pick a numeric max_tokens for upstream (llama.cpp rejects null)."""
+    if request_max_tokens is not None and request_max_tokens > 0:
+        return request_max_tokens
+    if model_obj.max_tokens and model_obj.max_tokens > 0:
+        return model_obj.max_tokens
+    return DEFAULT_MAX_TOKENS
+
+
+def omit_null_fields(payload: dict) -> dict:
+    """Drop keys whose value is None so JSON backends never see null scalars."""
+    return {key: value for key, value in payload.items() if value is not None}
+
+
+def build_upstream_chat_payload(
+    *,
+    model_id: str,
+    model_obj: Model,
+    chat_req: ChatCompletionRequest,
+    messages: list[dict],
+) -> dict:
+    """Build an upstream chat payload safe for strict JSON schemas (e.g. llama.cpp)."""
+    payload: dict = {
+        "model": model_id,
+        "messages": messages,
+        "temperature": chat_req.temperature,
+        "top_p": chat_req.top_p,
+        "n": chat_req.n,
+        "stream": chat_req.stream,
+        "max_tokens": resolve_upstream_max_tokens(chat_req.max_tokens, model_obj),
+        "presence_penalty": chat_req.presence_penalty,
+        "frequency_penalty": chat_req.frequency_penalty,
+        "stop": chat_req.stop,
+        "user": chat_req.user,
+    }
+    if chat_req.tools:
+        payload["tools"] = chat_req.tools
+    if chat_req.tool_choice:
+        payload["tool_choice"] = chat_req.tool_choice
+    if chat_req.cache_prompt is not None:
+        payload["cache_prompt"] = chat_req.cache_prompt
+    if chat_req.chat_template_kwargs is not None:
+        payload["chat_template_kwargs"] = chat_req.chat_template_kwargs
+    if chat_req.thinking_budget_tokens is not None:
+        payload["thinking_budget_tokens"] = chat_req.thinking_budget_tokens
+    if chat_req.stream:
+        payload["stream_options"] = {"include_usage": True}
+    return omit_null_fields(payload)
 
 
 @router.post("/v1/chat/completions")
@@ -107,31 +162,12 @@ async def chat_completions(
             md["name"] = m.name
         messages_dicts.append(md)
 
-    payload = {
-        "model": model_id,
-        "messages": messages_dicts,
-        "temperature": chat_req.temperature,
-        "top_p": chat_req.top_p,
-        "n": chat_req.n,
-        "stream": chat_req.stream,
-        "max_tokens": chat_req.max_tokens,
-        "presence_penalty": chat_req.presence_penalty,
-        "frequency_penalty": chat_req.frequency_penalty,
-        "stop": chat_req.stop,
-        "user": chat_req.user,
-    }
-    if chat_req.tools:
-        payload["tools"] = chat_req.tools
-    if chat_req.tool_choice:
-        payload["tool_choice"] = chat_req.tool_choice
-    if chat_req.cache_prompt is not None:
-        payload["cache_prompt"] = chat_req.cache_prompt
-    if chat_req.chat_template_kwargs is not None:
-        payload["chat_template_kwargs"] = chat_req.chat_template_kwargs
-    if chat_req.thinking_budget_tokens is not None:
-        payload["thinking_budget_tokens"] = chat_req.thinking_budget_tokens
-    if chat_req.stream:
-        payload["stream_options"] = {"include_usage": True}
+    payload = build_upstream_chat_payload(
+        model_id=model_id,
+        model_obj=model_obj,
+        chat_req=chat_req,
+        messages=messages_dicts,
+    )
 
     tool_limit = prepare_llamacpp_upstream_payload(
         payload, base_url, model_obj.provider,
