@@ -74,6 +74,8 @@ class RequestLog(Base):
     is_error: Mapped[bool] = mapped_column(Boolean, default=False)
     error_message: Mapped[str | None] = mapped_column(Text, nullable=True)
     model_used: Mapped[str | None] = mapped_column(String(255), nullable=True)
+    client_ip: Mapped[str | None] = mapped_column(String(64), nullable=True, index=True)
+    user_agent: Mapped[str | None] = mapped_column(String(512), nullable=True)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=datetime.utcnow)
 
     model: Mapped[Model] = relationship("Model")
@@ -91,6 +93,8 @@ class RequestLog(Base):
             "is_error": self.is_error,
             "error_message": self.error_message,
             "model_used": self.model_used,
+            "client_ip": self.client_ip,
+            "user_agent": self.user_agent,
             "created_at": self.created_at.isoformat() if self.created_at else None,
         }
 

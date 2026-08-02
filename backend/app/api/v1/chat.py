@@ -112,6 +112,7 @@ async def chat_completions(
     db=Depends(get_db),
 ):
     request_id = str(uuid.uuid4())
+    client_ip, user_agent = client_info_from_request(fastapi_request)
     messages_dicts = [m.model_dump(exclude_none=True) for m in chat_req.messages]
     features = extract_features(messages_dicts, tools=chat_req.tools)
 
@@ -181,6 +182,8 @@ async def chat_completions(
             latency_ms=0.0, cost=0.0,
             is_error=True, error_message=error_detail,
             model_used=model_id,
+            client_ip=client_ip,
+            user_agent=user_agent,
         )
         return JSONResponse(status_code=400, content=tool_limit.error_body)
     payload = tool_limit.payload
@@ -189,8 +192,6 @@ async def chat_completions(
         "Content-Type": "application/json",
         "Authorization": f"Bearer {api_key}",
     }
-
-    client_ip, user_agent = client_info_from_request(fastapi_request)
 
     if chat_req.stream:
         return await _handle_stream(
@@ -246,6 +247,8 @@ async def _handle_non_stream(
         return await _handle_non_stream_inner(
             request_id, model_id, model_obj, upstream_url, payload, headers, db,
             estimated_prompt_tokens=estimated_prompt_tokens,
+            client_ip=client_ip,
+            user_agent=user_agent,
         )
 
     return await _with_upstream_queue(
@@ -267,6 +270,8 @@ async def _handle_non_stream_inner(
     headers: dict,
     db,
     estimated_prompt_tokens: int = 0,
+    client_ip: str | None = None,
+    user_agent: str | None = None,
 ):
     start_time = time.monotonic()
     timeout = _get_timeout(model_obj)
@@ -285,6 +290,8 @@ async def _handle_non_stream_inner(
                     latency_ms=elapsed, cost=0.0,
                     is_error=True, error_message=error_detail,
                     model_used=model_id,
+                    client_ip=client_ip,
+                    user_agent=user_agent,
                 )
                 return JSONResponse(status_code=resp.status_code, content=error_body)
 
@@ -319,6 +326,8 @@ async def _handle_non_stream_inner(
                 prompt_tokens=prompt_tokens, completion_tokens=completion_tokens,
                 latency_ms=elapsed, cost=total_cost,
                 model_used=model_id,
+                client_ip=client_ip,
+                user_agent=user_agent,
             )
 
             choices = []
@@ -355,6 +364,8 @@ async def _handle_non_stream_inner(
             latency_ms=elapsed, cost=0.0,
             is_error=True, error_message="Upstream timeout",
             model_used=model_id,
+            client_ip=client_ip,
+            user_agent=user_agent,
         )
         return JSONResponse(
             status_code=504,
@@ -373,6 +384,8 @@ async def _handle_non_stream_inner(
             latency_ms=elapsed, cost=0.0,
             is_error=True, error_message=f"Request error: {exc}",
             model_used=model_id,
+            client_ip=client_ip,
+            user_agent=user_agent,
         )
         return JSONResponse(
             status_code=502,
@@ -414,6 +427,8 @@ async def _handle_stream(
             async for event in _iter_stream_events(
                 request_id, model_id, model_obj, upstream_url, payload, headers, db,
                 estimated_prompt_tokens=estimated_prompt_tokens,
+                client_ip=client_ip,
+                user_agent=user_agent,
             ):
                 yield event
         finally:
@@ -432,6 +447,8 @@ async def _iter_stream_events(
     headers: dict,
     db,
     estimated_prompt_tokens: int = 0,
+    client_ip: str | None = None,
+    user_agent: str | None = None,
 ):
     start_time = time.monotonic()
     prompt_tokens = 0
@@ -459,6 +476,8 @@ async def _iter_stream_events(
                         latency_ms=elapsed, cost=0.0,
                         is_error=True, error_message=error_detail,
                         model_used=model_id,
+                        client_ip=client_ip,
+                        user_agent=user_agent,
                     )
                     return
 
@@ -525,6 +544,8 @@ async def _iter_stream_events(
                     prompt_tokens=prompt_tokens, completion_tokens=completion_tokens,
                     latency_ms=elapsed, cost=total_cost,
                     model_used=model_id,
+                    client_ip=client_ip,
+                    user_agent=user_agent,
                 )
     except Exception as exc:
         logger.exception("Stream error for request %s", request_id)

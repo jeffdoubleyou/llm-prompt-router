@@ -882,6 +882,8 @@ async def log_request(
     is_error: bool = False,
     error_message: str | None = None,
     model_used: str | None = None,
+    client_ip: str | None = None,
+    user_agent: str | None = None,
 ) -> None:
     log_entry = RequestLog(
         id=str(uuid.uuid4()),
@@ -895,6 +897,8 @@ async def log_request(
         is_error=is_error,
         error_message=error_message,
         model_used=model_used,
+        client_ip=client_ip,
+        user_agent=user_agent,
     )
     db.add(log_entry)
     await db.commit()

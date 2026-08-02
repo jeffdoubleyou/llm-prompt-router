@@ -35,7 +35,16 @@ export interface RequestLogEntry {
   is_error: boolean;
   error_message: string | null;
   model_used: string | null;
+  client_ip?: string | null;
+  user_agent?: string | null;
   created_at: string | null;
+}
+
+export interface DashboardClientStat {
+  client_ip: string;
+  requests: number;
+  user_agent: string | null;
+  avg_tps: number | null;
 }
 
 export interface DashboardMetrics {
@@ -50,7 +59,10 @@ export interface DashboardMetrics {
     requests: number;
     avg_latency_ms: number;
     cost: number;
+    avg_tps?: number | null;
   }[];
+  clients: DashboardClientStat[];
+  client_hourly: Array<Record<string, string | number>>;
 }
 
 export interface ClassifierStatus {
@@ -253,7 +265,16 @@ export async function fetchLogs(params?: {
 }
 
 export async function fetchDashboardMetrics(): Promise<DashboardMetrics> {
-  return fetcher("/api/v1/metrics/dashboard");
+  const data = await fetcher<DashboardMetrics>("/api/v1/metrics/dashboard");
+  return {
+    ...data,
+    clients: data.clients ?? [],
+    client_hourly: data.client_hourly ?? [],
+    hourly: (data.hourly ?? []).map((h) => ({
+      ...h,
+      avg_tps: h.avg_tps ?? null,
+    })),
+  };
 }
 
 export async function fetchMetricsSummary(

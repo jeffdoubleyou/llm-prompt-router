@@ -11,7 +11,7 @@ from datetime import datetime, timedelta
 from fastapi import APIRouter, Depends, HTTPException, Query, UploadFile, File
 from sqlalchemy.exc import IntegrityError
 from fastapi.responses import StreamingResponse
-from sqlalchemy import Integer, func, select
+from sqlalchemy import Integer, and_, case, func, select
 from sse_starlette.sse import EventSourceResponse
 
 from app.core.config import settings
@@ -417,6 +417,13 @@ async def live_metrics(db=Depends(get_db)):
                 except Exception:
                     pass
 
+                upstream_waiting = 0
+                upstream_processing = 0
+                if settings.upstream_queue_enabled:
+                    snap = upstream_queue_manager.snapshot()
+                    upstream_waiting = snap["total_waiting"]
+                    upstream_processing = snap["total_processing"]
+
                 top_result = await db.execute(
                     select(RequestLog.model_id, func.count(RequestLog.id).label("cnt"))
                     .where(RequestLog.created_at >= since_5min)
@@ -429,8 +436,10 @@ async def live_metrics(db=Depends(get_db)):
 
                 metric = LiveMetric(
                     request_rate=round(total / 300, 2) if total > 0 else 0.0,
-                    active_requests=total % 100,
+                    active_requests=upstream_processing,
                     queue_depth=queue_depth,
+                    upstream_waiting=upstream_waiting,
+                    upstream_processing=upstream_processing,
                     avg_latency_ms=avg_lat,
                     error_rate=round(error_count / max(total, 1), 4),
                     total_requests=total,
@@ -601,12 +610,21 @@ async def dashboard_metrics(db=Depends(get_db)):
         for row in top_models_result.all()
     ]
 
+    tps_expr = case(
+        (
+            and_(RequestLog.latency_ms > 0, RequestLog.completion_tokens > 0),
+            RequestLog.completion_tokens * 1000.0 / RequestLog.latency_ms,
+        ),
+        else_=None,
+    )
+
     hourly_result = await db.execute(
         select(
             func.date_trunc("hour", RequestLog.created_at).label("bucket"),
             func.count(RequestLog.id).label("cnt"),
             func.coalesce(func.avg(RequestLog.latency_ms), 0).label("avg_lat"),
             func.coalesce(func.sum(RequestLog.cost), 0).label("cost_sum"),
+            func.avg(tps_expr).label("avg_tps"),
         )
         .where(RequestLog.created_at >= since_24h)
         .group_by("bucket")
@@ -618,9 +636,57 @@ async def dashboard_metrics(db=Depends(get_db)):
             "requests": int(row.cnt),
             "avg_latency_ms": float(row.avg_lat),
             "cost": float(row.cost_sum),
+            "avg_tps": round(float(row.avg_tps), 2) if row.avg_tps is not None else None,
         }
         for row in hourly_result.all()
     ]
+
+    client_ip_expr = func.coalesce(RequestLog.client_ip, "unknown")
+    clients_result = await db.execute(
+        select(
+            client_ip_expr.label("client_ip"),
+            func.count(RequestLog.id).label("cnt"),
+            func.max(RequestLog.user_agent).label("user_agent"),
+            func.avg(tps_expr).label("avg_tps"),
+        )
+        .where(RequestLog.created_at >= since_24h)
+        .group_by(client_ip_expr)
+        .order_by(func.count(RequestLog.id).desc())
+        .limit(20)
+    )
+    clients = [
+        {
+            "client_ip": row.client_ip,
+            "requests": int(row.cnt),
+            "user_agent": row.user_agent,
+            "avg_tps": round(float(row.avg_tps), 2) if row.avg_tps is not None else None,
+        }
+        for row in clients_result.all()
+    ]
+
+    top_client_ips = [c["client_ip"] for c in clients[:8]]
+    client_hourly: list[dict] = []
+    if top_client_ips:
+        client_hourly_result = await db.execute(
+            select(
+                func.date_trunc("hour", RequestLog.created_at).label("bucket"),
+                client_ip_expr.label("client_ip"),
+                func.count(RequestLog.id).label("cnt"),
+            )
+            .where(
+                RequestLog.created_at >= since_24h,
+                func.coalesce(RequestLog.client_ip, "unknown").in_(top_client_ips),
+            )
+            .group_by("bucket", client_ip_expr)
+            .order_by("bucket")
+        )
+        by_bucket: dict[str, dict] = {}
+        for row in client_hourly_result.all():
+            ts = row.bucket.isoformat() if row.bucket else ""
+            if ts not in by_bucket:
+                by_bucket[ts] = {"timestamp": ts}
+            by_bucket[ts][row.client_ip] = int(row.cnt)
+        client_hourly = list(by_bucket.values())
 
     return {
         "total_requests": total_requests,
@@ -630,4 +696,6 @@ async def dashboard_metrics(db=Depends(get_db)):
         "error_rate": round(error_count / max(total_requests, 1), 4),
         "top_models": top_models,
         "hourly": hourly,
+        "clients": clients,
+        "client_hourly": client_hourly,
     }

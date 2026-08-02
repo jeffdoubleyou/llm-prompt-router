@@ -252,6 +252,8 @@ class LiveMetric(BaseModel):
     request_rate: float = 0.0
     active_requests: int = 0
     queue_depth: int = 0
+    upstream_waiting: int = 0
+    upstream_processing: int = 0
     avg_latency_ms: float = 0.0
     error_rate: float = 0.0
     total_requests: int = 0

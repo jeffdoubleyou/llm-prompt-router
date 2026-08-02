@@ -25,6 +25,17 @@ import { formatLatencySeconds, msToSeconds } from "../lib/format";
 import { formatChartAxisHour, formatLocalTime } from "../lib/formatTime";
 import UpstreamQueuePanel from "../components/UpstreamQueuePanel";
 
+const CLIENT_COLORS = [
+  "#6366f1",
+  "#22d3ee",
+  "#f59e0b",
+  "#ef4444",
+  "#10b981",
+  "#8b5cf6",
+  "#ec4899",
+  "#14b8a6",
+];
+
 const formatNum = (n: number) =>
   n >= 1000000
     ? `${(n / 1000000).toFixed(1)}M`
@@ -53,7 +64,11 @@ export default function Dashboard() {
   const hourlyChartData = (data?.hourly ?? []).map((pt) => ({
     ...pt,
     avg_latency_s: msToSeconds(pt.avg_latency_ms),
+    avg_tps: pt.avg_tps ?? null,
   }));
+
+  const clientIps = (data?.clients ?? []).slice(0, 8).map((c) => c.client_ip);
+  const clientHourlyData = data?.client_hourly ?? [];
 
   const stats = [
     {
@@ -85,14 +100,14 @@ export default function Dashboard() {
       bg: "bg-red-900/20",
     },
     {
-      label: "Live Rate",
+      label: "Req/s (5m avg)",
       value: `${metric?.request_rate ?? 0}/s`,
       icon: Zap,
       color: "text-purple-400",
       bg: "bg-purple-900/20",
     },
     {
-      label: "Queue Depth",
+      label: "Classifier queue",
       value: String(metric?.queue_depth ?? 0),
       icon: BarChart3,
       color: "text-orange-400",
@@ -141,7 +156,7 @@ export default function Dashboard() {
               {formatLocalTime(metric.timestamp)}
             </span>
           </div>
-          <div className="grid grid-cols-2 md:grid-cols-4 gap-4 text-sm">
+          <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-6 gap-4 text-sm">
             <div>
               <span className="text-gray-500">Avg Latency</span>
               <p className="text-lg font-semibold text-gray-200">
@@ -155,14 +170,26 @@ export default function Dashboard() {
               </p>
             </div>
             <div>
-              <span className="text-gray-500">Active Requests</span>
+              <span className="text-gray-500">Upstream processing</span>
               <p className="text-lg font-semibold text-gray-200">
                 {metric.active_requests}
               </p>
             </div>
             <div>
+              <span className="text-gray-500">Upstream waiting</span>
+              <p className="text-lg font-semibold text-gray-200">
+                {metric.upstream_waiting ?? 0}
+              </p>
+            </div>
+            <div>
+              <span className="text-gray-500">Classifier queue</span>
+              <p className="text-lg font-semibold text-gray-200">
+                {metric.queue_depth}
+              </p>
+            </div>
+            <div>
               <span className="text-gray-500">Top Model</span>
-              <p className="text-lg font-semibold text-brand-400">
+              <p className="text-lg font-semibold text-brand-400 truncate">
                 {metric.top_model || "N/A"}
               </p>
             </div>
@@ -220,7 +247,10 @@ export default function Dashboard() {
                   borderRadius: "8px",
                   color: "#e5e7eb",
                 }}
-                formatter={(value: number) => [`${value.toFixed(2)} s`, "Avg Latency"]}
+                formatter={(value: number) => [
+                  `${value.toFixed(2)} s`,
+                  "Avg Latency",
+                ]}
               />
               <Line
                 type="monotone"
@@ -233,6 +263,144 @@ export default function Dashboard() {
               <Legend />
             </LineChart>
           </ResponsiveContainer>
+        </div>
+      </div>
+
+      <div className="card">
+        <h3 className="text-sm font-semibold text-gray-300 mb-4">
+          Output TPS Over Time (24h)
+        </h3>
+        <p className="text-xs text-gray-500 mb-3">
+          Average completion tokens / request duration per hour
+        </p>
+        <ResponsiveContainer width="100%" height={250}>
+          <LineChart data={hourlyChartData}>
+            <CartesianGrid strokeDasharray="3 3" stroke="#1f2937" />
+            <XAxis
+              dataKey="timestamp"
+              tick={{ fill: "#9ca3af", fontSize: 11 }}
+              tickFormatter={(v) => formatChartAxisHour(v)}
+            />
+            <YAxis
+              tick={{ fill: "#9ca3af", fontSize: 11 }}
+              tickFormatter={(v) => `${v}`}
+            />
+            <Tooltip
+              contentStyle={{
+                backgroundColor: "#111827",
+                border: "1px solid #1f2937",
+                borderRadius: "8px",
+                color: "#e5e7eb",
+              }}
+              formatter={(value) => [
+                value == null || value === ""
+                  ? "—"
+                  : `${Number(value).toFixed(1)} tok/s`,
+                "Avg TPS",
+              ]}
+            />
+            <Line
+              type="monotone"
+              dataKey="avg_tps"
+              stroke="#a78bfa"
+              strokeWidth={2}
+              dot={false}
+              connectNulls
+              name="Avg TPS"
+            />
+            <Legend />
+          </LineChart>
+        </ResponsiveContainer>
+      </div>
+
+      <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
+        <div className="card">
+          <h3 className="text-sm font-semibold text-gray-300 mb-4">
+            Requests per Client (24h)
+          </h3>
+          <div className="overflow-x-auto">
+            <table className="w-full text-sm">
+              <thead>
+                <tr className="border-b border-gray-800 text-gray-500">
+                  <th className="text-left py-2 px-3">Client IP</th>
+                  <th className="text-right py-2 px-3">Requests</th>
+                  <th className="text-right py-2 px-3">Avg TPS</th>
+                  <th className="text-left py-2 px-3">User-Agent</th>
+                </tr>
+              </thead>
+              <tbody>
+                {(data?.clients ?? []).map((c) => (
+                  <tr
+                    key={c.client_ip}
+                    className="border-b border-gray-800/50 hover:bg-gray-800/30"
+                  >
+                    <td className="py-2 px-3 font-mono text-xs text-gray-300">
+                      {c.client_ip}
+                    </td>
+                    <td className="py-2 px-3 text-right">{c.requests}</td>
+                    <td className="py-2 px-3 text-right tabular-nums text-gray-300">
+                      {c.avg_tps != null ? c.avg_tps.toFixed(1) : "—"}
+                    </td>
+                    <td
+                      className="py-2 px-3 text-xs text-gray-500 truncate max-w-[14rem]"
+                      title={c.user_agent ?? undefined}
+                    >
+                      {c.user_agent || "—"}
+                    </td>
+                  </tr>
+                ))}
+                {(data?.clients ?? []).length === 0 && (
+                  <tr>
+                    <td colSpan={4} className="py-8 text-center text-gray-600">
+                      No client data yet (new requests after deploy will appear
+                      here)
+                    </td>
+                  </tr>
+                )}
+              </tbody>
+            </table>
+          </div>
+        </div>
+
+        <div className="card">
+          <h3 className="text-sm font-semibold text-gray-300 mb-4">
+            Requests per Client Over Time (24h)
+          </h3>
+          {clientIps.length === 0 ? (
+            <div className="h-[250px] flex items-center justify-center text-sm text-gray-600">
+              No client time-series yet
+            </div>
+          ) : (
+            <ResponsiveContainer width="100%" height={250}>
+              <BarChart data={clientHourlyData}>
+                <CartesianGrid strokeDasharray="3 3" stroke="#1f2937" />
+                <XAxis
+                  dataKey="timestamp"
+                  tick={{ fill: "#9ca3af", fontSize: 11 }}
+                  tickFormatter={(v) => formatChartAxisHour(v)}
+                />
+                <YAxis tick={{ fill: "#9ca3af", fontSize: 11 }} allowDecimals={false} />
+                <Tooltip
+                  contentStyle={{
+                    backgroundColor: "#111827",
+                    border: "1px solid #1f2937",
+                    borderRadius: "8px",
+                    color: "#e5e7eb",
+                  }}
+                />
+                <Legend />
+                {clientIps.map((ip, idx) => (
+                  <Bar
+                    key={ip}
+                    dataKey={ip}
+                    stackId="clients"
+                    fill={CLIENT_COLORS[idx % CLIENT_COLORS.length]}
+                    name={ip}
+                  />
+                ))}
+              </BarChart>
+            </ResponsiveContainer>
+          )}
         </div>
       </div>
 

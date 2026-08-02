@@ -4,6 +4,8 @@ export interface LiveMetric {
   request_rate: number;
   active_requests: number;
   queue_depth: number;
+  upstream_waiting?: number;
+  upstream_processing?: number;
   avg_latency_ms: number;
   error_rate: number;
   total_requests: number;
