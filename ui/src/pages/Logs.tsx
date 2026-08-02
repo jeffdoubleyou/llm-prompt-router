@@ -8,7 +8,7 @@ import {
   CheckCircle2,
 } from "lucide-react";
 import { fetchLogs, RequestLogEntry } from "../lib/api";
-import { formatLatencySeconds } from "../lib/format";
+import { formatLatencySeconds, formatTokensPerSecond } from "../lib/format";
 import { formatLocalDateTime } from "../lib/formatTime";
 
 export default function Logs() {
@@ -82,8 +82,10 @@ export default function Logs() {
                 <th className="py-3 px-4 w-8"></th>
                 <th className="py-3 px-4">Request ID</th>
                 <th className="py-3 px-4">Model</th>
-                <th className="py-3 px-4 text-right">Tokens</th>
+                <th className="py-3 px-4 text-right">In</th>
+                <th className="py-3 px-4 text-right">Out</th>
                 <th className="py-3 px-4 text-right">Latency</th>
+                <th className="py-3 px-4 text-right">TPS</th>
                 <th className="py-3 px-4 text-right">Cost</th>
                 <th className="py-3 px-4 text-center">Status</th>
                 <th className="py-3 px-4">Time</th>
@@ -111,11 +113,20 @@ export default function Logs() {
                     {log.request_id.slice(0, 12)}...
                   </td>
                   <td className="py-3 px-4">{log.model_id}</td>
-                  <td className="py-3 px-4 text-right">
-                    {log.total_tokens.toLocaleString()}
+                  <td className="py-3 px-4 text-right text-gray-300">
+                    {log.prompt_tokens.toLocaleString()}
+                  </td>
+                  <td className="py-3 px-4 text-right text-gray-300">
+                    {log.completion_tokens.toLocaleString()}
                   </td>
                   <td className="py-3 px-4 text-right">
                     {formatLatencySeconds(log.latency_ms)}
+                  </td>
+                  <td className="py-3 px-4 text-right tabular-nums">
+                    {formatTokensPerSecond(
+                      log.completion_tokens,
+                      log.latency_ms,
+                    )}
                   </td>
                   <td className="py-3 px-4 text-right">
                     ${log.cost.toFixed(6)}
@@ -138,7 +149,7 @@ export default function Logs() {
               {(data?.logs ?? []).length === 0 && (
                 <tr>
                   <td
-                    colSpan={8}
+                    colSpan={10}
                     className="py-12 text-center text-gray-600"
                   >
                     No logs found.
@@ -199,16 +210,27 @@ function renderExpandedRow(logs: RequestLogEntry[], id: string) {
           <span>{log.model_used || "—"}</span>
         </div>
         <div>
-          <span className="text-gray-500">Prompt Tokens: </span>
+          <span className="text-gray-500">Prompt Tokens (in): </span>
           <span>{log.prompt_tokens.toLocaleString()}</span>
         </div>
         <div>
-          <span className="text-gray-500">Completion Tokens: </span>
+          <span className="text-gray-500">Completion Tokens (out): </span>
           <span>{log.completion_tokens.toLocaleString()}</span>
+        </div>
+        <div>
+          <span className="text-gray-500">Total Tokens: </span>
+          <span>{log.total_tokens.toLocaleString()}</span>
         </div>
         <div>
           <span className="text-gray-500">Latency: </span>
           <span>{formatLatencySeconds(log.latency_ms)}</span>
+        </div>
+        <div>
+          <span className="text-gray-500">Output TPS: </span>
+          <span>
+            {formatTokensPerSecond(log.completion_tokens, log.latency_ms)}
+            {log.completion_tokens > 0 && log.latency_ms > 0 ? " tok/s" : ""}
+          </span>
         </div>
         <div>
           <span className="text-gray-500">Cost: </span>

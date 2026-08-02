@@ -1,10 +1,25 @@
 import { useQuery } from "@tanstack/react-query";
 import { Layers, RefreshCw } from "lucide-react";
-import { fetchUpstreamQueueStatus } from "../lib/api";
+import { fetchUpstreamQueueStatus, type UpstreamQueueEntry } from "../lib/api";
 import { formatLocalTime } from "../lib/formatTime";
 
 interface Props {
   compact?: boolean;
+}
+
+function ClientMeta({ entry }: { entry: UpstreamQueueEntry }) {
+  const ip = entry.client_ip || "unknown";
+  const ua = entry.user_agent;
+  return (
+    <div className="min-w-0">
+      <div className="font-mono text-gray-300">{ip}</div>
+      {ua && (
+        <div className="text-gray-500 truncate max-w-[14rem]" title={ua}>
+          {ua}
+        </div>
+      )}
+    </div>
+  );
 }
 
 export default function UpstreamQueuePanel({ compact = false }: Props) {
@@ -53,6 +68,7 @@ export default function UpstreamQueuePanel({ compact = false }: Props) {
     upstream?.base_urls.filter(
       (g) => g.processing || g.waiting.length > 0
     ) ?? [];
+  const clients = upstream?.clients ?? [];
 
   return (
     <div className="card">
@@ -118,6 +134,62 @@ export default function UpstreamQueuePanel({ compact = false }: Props) {
             )}
           </div>
 
+          {!compact && clients.length > 0 && (
+            <div>
+              <h4 className="text-xs font-semibold text-gray-400 mb-2">
+                Requests per client
+              </h4>
+              <div className="overflow-x-auto border border-gray-800 rounded-md">
+                <table className="w-full text-xs">
+                  <thead>
+                    <tr className="text-gray-500 text-left">
+                      <th className="py-1.5 px-2">Client IP</th>
+                      <th className="py-1.5 px-2">In queue</th>
+                      <th className="py-1.5 px-2">Waiting</th>
+                      <th className="py-1.5 px-2">Processing</th>
+                      <th className="py-1.5 px-2">Total</th>
+                      <th className="py-1.5 px-2">User-Agent</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {clients.map((c) => (
+                      <tr
+                        key={c.client_ip}
+                        className="border-t border-gray-800/50"
+                      >
+                        <td className="py-1.5 px-2 font-mono text-gray-300">
+                          {c.client_ip}
+                        </td>
+                        <td className="py-1.5 px-2 text-cyan-300">
+                          {c.in_queue}
+                        </td>
+                        <td className="py-1.5 px-2 text-yellow-400">
+                          {c.waiting}
+                        </td>
+                        <td className="py-1.5 px-2 text-green-400">
+                          {c.processing}
+                        </td>
+                        <td className="py-1.5 px-2 text-gray-200">
+                          {c.total_requests}
+                        </td>
+                        <td
+                          className="py-1.5 px-2 text-gray-500 truncate max-w-[16rem]"
+                          title={c.user_agent ?? undefined}
+                        >
+                          {c.user_agent || "—"}
+                        </td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+              <p className="text-[10px] text-gray-600 mt-1">
+                Total is counted since process start; in-queue is live waiting +
+                processing.
+              </p>
+            </div>
+          )}
+
           {activeGroups.length === 0 ? (
             <p className="text-sm text-gray-500">
               No requests waiting or processing right now.
@@ -132,7 +204,7 @@ export default function UpstreamQueuePanel({ compact = false }: Props) {
                   {group.base_url}
                 </div>
                 {group.processing && (
-                  <div className="text-sm flex flex-wrap gap-2 items-center bg-green-900/10 border border-green-900/30 rounded px-2 py-1.5">
+                  <div className="text-sm flex flex-wrap gap-x-3 gap-y-1 items-start bg-green-900/10 border border-green-900/30 rounded px-2 py-1.5">
                     <span className="text-green-400 font-medium">
                       Processing
                     </span>
@@ -142,38 +214,45 @@ export default function UpstreamQueuePanel({ compact = false }: Props) {
                     <span className="text-xs text-gray-500 font-mono">
                       {group.processing.request_id}
                     </span>
+                    <ClientMeta entry={group.processing} />
                   </div>
                 )}
                 {group.waiting.length > 0 && (
-                  <table className="w-full text-xs">
-                    <thead>
-                      <tr className="text-gray-500 text-left">
-                        <th className="py-1 pr-2">#</th>
-                        <th className="py-1 pr-2">Model</th>
-                        <th className="py-1 pr-2">Request</th>
-                        <th className="py-1">Queued</th>
-                      </tr>
-                    </thead>
-                    <tbody>
-                      {group.waiting.map((w) => (
-                        <tr
-                          key={w.request_id}
-                          className="border-t border-gray-800/50"
-                        >
-                          <td className="py-1.5 pr-2 text-yellow-400">
-                            {w.position}
-                          </td>
-                          <td className="py-1.5 pr-2">{w.model_id}</td>
-                          <td className="py-1.5 pr-2 font-mono text-gray-500">
-                            {w.request_id}
-                          </td>
-                          <td className="py-1.5 text-gray-500">
-                            {formatLocalTime(w.created_at)}
-                          </td>
+                  <div className="overflow-x-auto">
+                    <table className="w-full text-xs">
+                      <thead>
+                        <tr className="text-gray-500 text-left">
+                          <th className="py-1 pr-2">#</th>
+                          <th className="py-1 pr-2">Model</th>
+                          <th className="py-1 pr-2">Client</th>
+                          <th className="py-1 pr-2">Request</th>
+                          <th className="py-1">Queued</th>
                         </tr>
-                      ))}
-                    </tbody>
-                  </table>
+                      </thead>
+                      <tbody>
+                        {group.waiting.map((w) => (
+                          <tr
+                            key={w.request_id}
+                            className="border-t border-gray-800/50"
+                          >
+                            <td className="py-1.5 pr-2 text-yellow-400">
+                              {w.position}
+                            </td>
+                            <td className="py-1.5 pr-2">{w.model_id}</td>
+                            <td className="py-1.5 pr-2">
+                              <ClientMeta entry={w} />
+                            </td>
+                            <td className="py-1.5 pr-2 font-mono text-gray-500">
+                              {w.request_id}
+                            </td>
+                            <td className="py-1.5 text-gray-500">
+                              {formatLocalTime(w.created_at)}
+                            </td>
+                          </tr>
+                        ))}
+                      </tbody>
+                    </table>
+                  </div>
                 )}
               </div>
             ))

@@ -323,6 +323,7 @@ async def upstream_queue_status():
             "base_urls": [],
             "total_waiting": 0,
             "total_processing": 0,
+            "clients": [],
         }
     return upstream_queue_manager.snapshot()
 

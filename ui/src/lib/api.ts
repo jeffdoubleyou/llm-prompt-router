@@ -286,6 +286,17 @@ export interface UpstreamQueueEntry {
   status: string;
   position: number;
   created_at: string;
+  client_ip?: string | null;
+  user_agent?: string | null;
+}
+
+export interface UpstreamQueueClient {
+  client_ip: string;
+  waiting: number;
+  processing: number;
+  in_queue: number;
+  total_requests: number;
+  user_agent?: string | null;
 }
 
 export interface UpstreamQueueGroup {
@@ -301,6 +312,7 @@ export interface UpstreamQueueStatus {
   base_urls: UpstreamQueueGroup[];
   total_waiting: number;
   total_processing: number;
+  clients: UpstreamQueueClient[];
 }
 
 export interface ModelRoutingEvaluation {

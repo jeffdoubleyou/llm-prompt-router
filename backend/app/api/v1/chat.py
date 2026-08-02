@@ -30,7 +30,7 @@ from app.services.router_service import (
     parse_usage_from_response,
     store_prompt_debug,
 )
-from app.services.upstream_queue import upstream_queue_manager
+from app.services.upstream_queue import client_info_from_request, upstream_queue_manager
 from app.services.llamacpp_tools import prepare_llamacpp_upstream_payload
 from app.services.upstream_errors import (
     openai_error_body,
@@ -190,21 +190,41 @@ async def chat_completions(
         "Authorization": f"Bearer {api_key}",
     }
 
+    client_ip, user_agent = client_info_from_request(fastapi_request)
+
     if chat_req.stream:
         return await _handle_stream(
             request_id, model_id, model_obj, base_url, upstream_url, payload, headers, db,
             estimated_prompt_tokens=features.token_count,
+            client_ip=client_ip,
+            user_agent=user_agent,
         )
 
     return await _handle_non_stream(
         request_id, model_id, model_obj, base_url, upstream_url, payload, headers, db,
         estimated_prompt_tokens=features.token_count,
+        client_ip=client_ip,
+        user_agent=user_agent,
     )
 
 
-async def _with_upstream_queue(base_url: str, request_id: str, model_id: str, coro):
+async def _with_upstream_queue(
+    base_url: str,
+    request_id: str,
+    model_id: str,
+    coro,
+    *,
+    client_ip: str | None = None,
+    user_agent: str | None = None,
+):
     if settings.upstream_queue_enabled:
-        async with upstream_queue_manager.acquire(base_url, request_id, model_id):
+        async with upstream_queue_manager.acquire(
+            base_url,
+            request_id,
+            model_id,
+            client_ip=client_ip,
+            user_agent=user_agent,
+        ):
             return await coro()
     return await coro()
 
@@ -219,6 +239,8 @@ async def _handle_non_stream(
     headers: dict,
     db,
     estimated_prompt_tokens: int = 0,
+    client_ip: str | None = None,
+    user_agent: str | None = None,
 ):
     async def _execute():
         return await _handle_non_stream_inner(
@@ -226,7 +248,14 @@ async def _handle_non_stream(
             estimated_prompt_tokens=estimated_prompt_tokens,
         )
 
-    return await _with_upstream_queue(base_url, request_id, model_id, _execute)
+    return await _with_upstream_queue(
+        base_url,
+        request_id,
+        model_id,
+        _execute,
+        client_ip=client_ip,
+        user_agent=user_agent,
+    )
 
 
 async def _handle_non_stream_inner(
@@ -366,10 +395,18 @@ async def _handle_stream(
     headers: dict,
     db,
     estimated_prompt_tokens: int = 0,
+    client_ip: str | None = None,
+    user_agent: str | None = None,
 ):
     queue_slot = None
     if settings.upstream_queue_enabled:
-        queue_slot = upstream_queue_manager.acquire(base_url, request_id, model_id)
+        queue_slot = upstream_queue_manager.acquire(
+            base_url,
+            request_id,
+            model_id,
+            client_ip=client_ip,
+            user_agent=user_agent,
+        )
         await queue_slot.__aenter__()
 
     async def event_generator():

@@ -76,11 +76,17 @@ async def test_debug_complexity_returns_breakdown(mock_db_with_models):
         app.dependency_overrides.clear()
 
 
-@pytest.mark.asyncio
-async def test_upstream_queue_serializes_per_base_url():
+def _reset_upstream_queue():
     upstream_queue_manager._semaphores.clear()
     upstream_queue_manager._waiting.clear()
     upstream_queue_manager._processing.clear()
+    upstream_queue_manager._client_totals.clear()
+    upstream_queue_manager._client_last_ua.clear()
+
+
+@pytest.mark.asyncio
+async def test_upstream_queue_serializes_per_base_url():
+    _reset_upstream_queue()
 
     order: list[str] = []
 
@@ -107,22 +113,67 @@ async def test_upstream_queue_status_endpoint():
         resp = await client.get("/api/v1/upstream-queue")
     assert resp.status_code == 200
     assert resp.json()["enabled"] is False
+    assert resp.json()["clients"] == []
 
 
 @pytest.mark.asyncio
 async def test_upstream_queue_snapshot_omits_idle_base_urls():
-    upstream_queue_manager._semaphores.clear()
-    upstream_queue_manager._waiting.clear()
-    upstream_queue_manager._processing.clear()
+    _reset_upstream_queue()
 
     async with upstream_queue_manager.acquire(
-        "http://localhost:8080/v1", "req-a", "model-a",
+        "http://localhost:8080/v1",
+        "req-a",
+        "model-a",
+        client_ip="203.0.113.10",
+        user_agent="test-agent/1.0",
     ):
         snap = upstream_queue_manager.snapshot()
         assert snap["total_processing"] == 1
         assert len(snap["base_urls"]) == 1
+        processing = snap["base_urls"][0]["processing"]
+        assert processing["client_ip"] == "203.0.113.10"
+        assert processing["user_agent"] == "test-agent/1.0"
+        assert snap["clients"] == [
+            {
+                "client_ip": "203.0.113.10",
+                "waiting": 0,
+                "processing": 1,
+                "in_queue": 1,
+                "total_requests": 1,
+                "user_agent": "test-agent/1.0",
+            }
+        ]
 
     idle = upstream_queue_manager.snapshot()
     assert idle["total_processing"] == 0
     assert idle["total_waiting"] == 0
     assert idle["base_urls"] == []
+    assert idle["clients"] == [
+        {
+            "client_ip": "203.0.113.10",
+            "waiting": 0,
+            "processing": 0,
+            "in_queue": 0,
+            "total_requests": 1,
+            "user_agent": "test-agent/1.0",
+        }
+    ]
+
+
+@pytest.mark.asyncio
+async def test_client_info_from_request_prefers_forwarded_for():
+    from app.services.upstream_queue import client_info_from_request
+
+    class _Client:
+        host = "10.0.0.1"
+
+    class _Request:
+        headers = {
+            "x-forwarded-for": "198.51.100.7, 10.0.0.1",
+            "user-agent": "curl/8.0",
+        }
+        client = _Client()
+
+    ip, ua = client_info_from_request(_Request())
+    assert ip == "198.51.100.7"
+    assert ua == "curl/8.0"

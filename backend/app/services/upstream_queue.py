@@ -26,6 +26,8 @@ class UpstreamQueueEntry:
     position: int
     created_at: str
     queued_at_monotonic: float
+    client_ip: str | None = None
+    user_agent: str | None = None
 
     def to_dict(self) -> dict:
         return {
@@ -35,7 +37,27 @@ class UpstreamQueueEntry:
             "status": self.status,
             "position": self.position,
             "created_at": self.created_at,
+            "client_ip": self.client_ip,
+            "user_agent": self.user_agent,
         }
+
+
+def client_info_from_request(request) -> tuple[str | None, str | None]:
+    """Extract client IP and User-Agent from a Starlette/FastAPI Request."""
+    forwarded = request.headers.get("x-forwarded-for")
+    if forwarded:
+        client_ip = forwarded.split(",")[0].strip() or None
+    else:
+        real_ip = request.headers.get("x-real-ip")
+        if real_ip:
+            client_ip = real_ip.strip() or None
+        else:
+            client_ip = request.client.host if request.client else None
+
+    user_agent = request.headers.get("user-agent")
+    if user_agent:
+        user_agent = user_agent.strip() or None
+    return client_ip, user_agent
 
 
 class UpstreamQueueManager:
@@ -45,6 +67,8 @@ class UpstreamQueueManager:
         self._semaphores: dict[str, asyncio.Semaphore] = {}
         self._waiting: dict[str, list[UpstreamQueueEntry]] = defaultdict(list)
         self._processing: dict[str, UpstreamQueueEntry | None] = defaultdict(lambda: None)
+        self._client_totals: dict[str, int] = defaultdict(int)
+        self._client_last_ua: dict[str, str] = {}
         self._registry_lock = asyncio.Lock()
 
     @staticmethod
@@ -61,8 +85,22 @@ class UpstreamQueueManager:
         for idx, entry in enumerate(self._waiting[key], start=1):
             entry.position = idx
 
+    def _record_client(self, client_ip: str | None, user_agent: str | None) -> None:
+        key = client_ip or "unknown"
+        self._client_totals[key] += 1
+        if user_agent:
+            self._client_last_ua[key] = user_agent
+
     @asynccontextmanager
-    async def acquire(self, base_url: str, request_id: str, model_id: str):
+    async def acquire(
+        self,
+        base_url: str,
+        request_id: str,
+        model_id: str,
+        *,
+        client_ip: str | None = None,
+        user_agent: str | None = None,
+    ):
         key = self.normalize_base_url(base_url)
         sem = await self._ensure_semaphore(key)
 
@@ -74,19 +112,23 @@ class UpstreamQueueManager:
             position=0,
             created_at=datetime.now(timezone.utc).isoformat(),
             queued_at_monotonic=asyncio.get_event_loop().time(),
+            client_ip=client_ip,
+            user_agent=user_agent,
         )
 
         async with self._registry_lock:
             self._waiting[key].append(entry)
             self._refresh_positions(key)
+            self._record_client(client_ip, user_agent)
             queue_depth = len(self._waiting[key])
 
         if queue_depth > 1:
             logger.info(
-                "Request %s queued for %s (position %d)",
+                "Request %s queued for %s (position %d, client=%s)",
                 request_id,
                 base_url,
                 entry.position,
+                client_ip or "unknown",
             )
 
         await sem.acquire()
@@ -104,6 +146,46 @@ class UpstreamQueueManager:
             async with self._registry_lock:
                 self._processing[key] = None
             sem.release()
+
+    def _client_summary(self) -> list[dict]:
+        in_queue: dict[str, dict[str, int]] = defaultdict(
+            lambda: {"waiting": 0, "processing": 0}
+        )
+        last_ua: dict[str, str] = {}
+
+        for entries in self._waiting.values():
+            for entry in entries:
+                ip = entry.client_ip or "unknown"
+                in_queue[ip]["waiting"] += 1
+                if entry.user_agent:
+                    last_ua[ip] = entry.user_agent
+
+        for entry in self._processing.values():
+            if entry is None:
+                continue
+            ip = entry.client_ip or "unknown"
+            in_queue[ip]["processing"] += 1
+            if entry.user_agent:
+                last_ua[ip] = entry.user_agent
+
+        ips = set(self._client_totals.keys()) | set(in_queue.keys())
+        clients: list[dict] = []
+        for ip in ips:
+            waiting = in_queue[ip]["waiting"]
+            processing = in_queue[ip]["processing"]
+            clients.append({
+                "client_ip": ip,
+                "waiting": waiting,
+                "processing": processing,
+                "in_queue": waiting + processing,
+                "total_requests": self._client_totals.get(ip, 0),
+                "user_agent": last_ua.get(ip) or self._client_last_ua.get(ip),
+            })
+
+        clients.sort(
+            key=lambda c: (-c["in_queue"], -c["total_requests"], c["client_ip"])
+        )
+        return clients
 
     def snapshot(self) -> dict:
         """Current waiting and processing requests grouped by base URL."""
@@ -128,6 +210,7 @@ class UpstreamQueueManager:
             "base_urls": groups,
             "total_waiting": total_waiting,
             "total_processing": total_processing,
+            "clients": self._client_summary(),
         }
 
 
